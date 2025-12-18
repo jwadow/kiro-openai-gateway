@@ -591,8 +591,13 @@ class TestKiroHttpClientFirstTokenTimeout:
                     stream=True
                 )
         
-        print("Проверка: AsyncClient создан с FIRST_TOKEN_TIMEOUT...")
-        mock_async_client.assert_called_with(timeout=FIRST_TOKEN_TIMEOUT, follow_redirects=True)
+        print("Проверка: AsyncClient создан с httpx.Timeout для streaming...")
+        # For streaming, we use httpx.Timeout with connect=FIRST_TOKEN_TIMEOUT and read=STREAMING_READ_TIMEOUT
+        call_args = mock_async_client.call_args
+        timeout_arg = call_args.kwargs.get('timeout')
+        assert timeout_arg is not None, f"timeout not found in call_args: {call_args}"
+        assert timeout_arg.connect == FIRST_TOKEN_TIMEOUT
+        assert call_args.kwargs.get('follow_redirects') == True
         assert response.status_code == 200
     
     @pytest.mark.asyncio
@@ -739,8 +744,13 @@ class TestKiroHttpClientFirstTokenTimeout:
                     first_token_timeout=custom_timeout
                 )
         
-        print(f"Проверка: AsyncClient создан с таймаутом {custom_timeout}...")
-        mock_async_client.assert_called_with(timeout=custom_timeout, follow_redirects=True)
+        print(f"Проверка: AsyncClient создан с httpx.Timeout для streaming с custom connect timeout...")
+        # For streaming, we use httpx.Timeout with connect=custom_timeout and read=STREAMING_READ_TIMEOUT
+        call_args = mock_async_client.call_args
+        timeout_arg = call_args.kwargs.get('timeout')
+        assert timeout_arg is not None, f"timeout not found in call_args: {call_args}"
+        assert timeout_arg.connect == custom_timeout
+        assert call_args.kwargs.get('follow_redirects') == True
         assert response.status_code == 200
     
     @pytest.mark.asyncio

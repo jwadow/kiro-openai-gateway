@@ -230,6 +230,13 @@ LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 # Set a lower value (e.g., 10-15) for more aggressive retry.
 FIRST_TOKEN_TIMEOUT: float = float(os.getenv("FIRST_TOKEN_TIMEOUT", "15"))
 
+# Read timeout for streaming responses (in seconds).
+# This is the maximum time to wait for data between chunks during streaming.
+# Should be longer than FIRST_TOKEN_TIMEOUT since the model may pause between chunks
+# while "thinking" (especially for tool calls or complex reasoning).
+# Default: 300 seconds (5 minutes) - generous timeout to avoid premature disconnects.
+STREAMING_READ_TIMEOUT: float = float(os.getenv("STREAMING_READ_TIMEOUT", "300"))
+
 # Maximum number of attempts on first token timeout.
 # After exhausting all attempts, an error will be returned.
 # Default: 3 attempts

@@ -33,7 +33,7 @@ import httpx
 from fastapi import HTTPException
 from loguru import logger
 
-from kiro_gateway.config import MAX_RETRIES, BASE_RETRY_DELAY, FIRST_TOKEN_TIMEOUT, FIRST_TOKEN_MAX_RETRIES
+from kiro_gateway.config import MAX_RETRIES, BASE_RETRY_DELAY, FIRST_TOKEN_TIMEOUT, FIRST_TOKEN_MAX_RETRIES, STREAMING_READ_TIMEOUT
 from kiro_gateway.auth import KiroAuthManager
 from kiro_gateway.utils import get_kiro_headers
 
@@ -71,18 +71,31 @@ class KiroHttpClient:
         self.auth_manager = auth_manager
         self.client: Optional[httpx.AsyncClient] = None
     
-    async def _get_client(self, timeout: float = 300) -> httpx.AsyncClient:
+    async def _get_client(self, timeout: float = 300, stream: bool = False) -> httpx.AsyncClient:
         """
         Возвращает или создаёт HTTP клиент.
         
         Args:
             timeout: Таймаут для запросов (секунды)
+            stream: Если True, использует отдельный read timeout для streaming
         
         Returns:
             Активный HTTP клиент
         """
         if self.client is None or self.client.is_closed:
-            self.client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+            if stream:
+                # For streaming: use short connect timeout but long read timeout
+                # This allows quick retry on connection issues while giving
+                # the model plenty of time to generate responses between chunks
+                timeout_config = httpx.Timeout(
+                    connect=timeout,  # Connection timeout (FIRST_TOKEN_TIMEOUT)
+                    read=STREAMING_READ_TIMEOUT,  # Read timeout for chunks (5 min default)
+                    write=30.0,  # Write timeout
+                    pool=30.0  # Pool timeout
+                )
+            else:
+                timeout_config = timeout
+            self.client = httpx.AsyncClient(timeout=timeout_config, follow_redirects=True)
         return self.client
     
     async def close(self) -> None:
@@ -129,7 +142,7 @@ class KiroHttpClient:
             timeout = 300
             max_retries = MAX_RETRIES
         
-        client = await self._get_client(timeout)
+        client = await self._get_client(timeout, stream=stream)
         last_error = None
         
         for attempt in range(max_retries):
