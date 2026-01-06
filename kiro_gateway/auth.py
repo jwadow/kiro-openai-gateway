@@ -489,9 +489,29 @@ class KiroAuthManager:
             "Content-Type": "application/x-www-form-urlencoded",
         }
         
+        # Log request details (without secrets) for debugging
+        logger.debug(f"AWS SSO OIDC refresh request: url={url}, region={self._region}, "
+                     f"client_id={self._client_id[:8]}..., scopes={self._scopes}")
+        
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(url, data=data, headers=headers)
-            response.raise_for_status()
+            
+            # Log response details for debugging (especially on errors)
+            if response.status_code != 200:
+                error_body = response.text
+                logger.error(f"AWS SSO OIDC refresh failed: status={response.status_code}, "
+                             f"body={error_body}")
+                # Try to parse AWS error for more details
+                try:
+                    error_json = response.json()
+                    error_code = error_json.get("error", "unknown")
+                    error_desc = error_json.get("error_description", "no description")
+                    logger.error(f"AWS SSO OIDC error details: error={error_code}, "
+                                 f"description={error_desc}")
+                except Exception:
+                    pass  # Body wasn't JSON, already logged as text
+                response.raise_for_status()
+            
             result = response.json()
         
         new_access_token = result.get("accessToken")

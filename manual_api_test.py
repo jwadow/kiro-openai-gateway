@@ -280,9 +280,29 @@ def refresh_auth_token_aws_sso_oidc():
         "Content-Type": "application/x-www-form-urlencoded",
     }
     
+    # Log request details (without secrets) for debugging
+    logger.debug(f"AWS SSO OIDC refresh request: url={AWS_SSO_OIDC_TOKEN_URL}, "
+                 f"region={KIRO_REGION}, client_id={CLIENT_ID[:8] if CLIENT_ID else 'None'}..., "
+                 f"scopes={SCOPES}")
+    
     try:
         response = requests.post(AWS_SSO_OIDC_TOKEN_URL, data=data, headers=headers)
-        response.raise_for_status()
+        
+        # Log response details for debugging (especially on errors)
+        if response.status_code != 200:
+            logger.error(f"AWS SSO OIDC refresh failed: status={response.status_code}")
+            logger.error(f"AWS SSO OIDC response body: {response.text}")
+            # Try to parse AWS error for more details
+            try:
+                error_json = response.json()
+                error_code = error_json.get("error", "unknown")
+                error_desc = error_json.get("error_description", "no description")
+                logger.error(f"AWS SSO OIDC error details: error={error_code}, "
+                             f"description={error_desc}")
+            except Exception:
+                pass  # Body wasn't JSON, already logged as text
+            response.raise_for_status()
+        
         result = response.json()
         
         new_token = result.get("accessToken")
