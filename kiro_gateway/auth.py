@@ -482,9 +482,8 @@ class KiroAuthManager:
             "refresh_token": self._refresh_token,
         }
         
-        # Add scopes if available (required for some AWS SSO configurations)
-        if self._scopes:
-            data["scope"] = " ".join(self._scopes)
+        # Note: scope parameter is NOT sent during refresh per OAuth 2.0 RFC 6749 Section 6
+        # AWS SSO OIDC uses the originally granted scopes automatically
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
         }

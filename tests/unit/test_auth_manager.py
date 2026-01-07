@@ -1090,6 +1090,86 @@ class TestKiroAuthManagerAwsSsoOidcRefresh:
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc)
             assert manager._expires_at > now
+    
+    @pytest.mark.asyncio
+    async def test_refresh_token_aws_sso_oidc_does_not_send_scopes(self, mock_aws_sso_oidc_token_response):
+        """
+        What it does: Verifies that scopes are NOT sent in refresh request.
+        Purpose: Per OAuth 2.0 RFC 6749 Section 6, scope is optional in refresh and
+                 AWS SSO OIDC returns invalid_request if scope is sent.
+        """
+        print("Setup: Creating KiroAuthManager with scopes...")
+        manager = KiroAuthManager(
+            refresh_token="test_refresh",
+            client_id="test_client_id",
+            client_secret="test_client_secret"
+        )
+        # Simulate scopes loaded from SQLite (this is what caused the bug)
+        manager._scopes = ["codewhisperer:completions", "codewhisperer:analysis"]
+        
+        print("Setup: Mocking HTTP client...")
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value=mock_aws_sso_oidc_token_response())
+        mock_response.raise_for_status = Mock()
+        
+        with patch('kiro_gateway.auth.httpx.AsyncClient') as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+            
+            await manager._refresh_token_aws_sso_oidc()
+            
+            print("Verification: scope NOT in request data...")
+            call_args = mock_client.post.call_args
+            data = call_args[1].get('data', {})
+            print(f"Request data keys: {list(data.keys())}")
+            assert 'scope' not in data, "scope should NOT be sent in refresh request"
+            
+            print("Verification: only required fields sent...")
+            expected_keys = {'grant_type', 'client_id', 'client_secret', 'refresh_token'}
+            print(f"Comparing keys: Expected {expected_keys}, Got {set(data.keys())}")
+            assert set(data.keys()) == expected_keys
+    
+    @pytest.mark.asyncio
+    async def test_refresh_token_aws_sso_oidc_works_without_scopes(self, mock_aws_sso_oidc_token_response):
+        """
+        What it does: Verifies refresh works when scopes are None.
+        Purpose: Ensure backward compatibility with credentials that don't have scopes.
+        """
+        print("Setup: Creating KiroAuthManager without scopes...")
+        manager = KiroAuthManager(
+            refresh_token="test_refresh",
+            client_id="test_client_id",
+            client_secret="test_client_secret"
+        )
+        # Explicitly set scopes to None (default state)
+        manager._scopes = None
+        
+        print("Setup: Mocking HTTP client...")
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value=mock_aws_sso_oidc_token_response())
+        mock_response.raise_for_status = Mock()
+        
+        with patch('kiro_gateway.auth.httpx.AsyncClient') as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+            
+            await manager._refresh_token_aws_sso_oidc()
+            
+            print("Verification: Token refreshed successfully...")
+            assert manager._access_token == "new_aws_sso_access_token"
+            
+            print("Verification: scope NOT in request data...")
+            call_args = mock_client.post.call_args
+            data = call_args[1].get('data', {})
+            assert 'scope' not in data
 
 
 # =============================================================================

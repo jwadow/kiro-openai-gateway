@@ -394,6 +394,14 @@ Tests for `_refresh_token_aws_sso_oidc()` method.
   - **What it does**: Verifies expiration time is calculated correctly
   - **Purpose**: Ensure expires_at is calculated based on expiresIn
 
+- **`test_refresh_token_aws_sso_oidc_does_not_send_scopes()`**:
+  - **What it does**: Verifies that scopes are NOT sent in refresh request even when loaded from SQLite
+  - **Purpose**: Per OAuth 2.0 RFC 6749 Section 6, scope is optional in refresh and AWS SSO OIDC returns invalid_request if scope is sent (fix for issue #12 with @mzazon)
+
+- **`test_refresh_token_aws_sso_oidc_works_without_scopes()`**:
+  - **What it does**: Verifies refresh works when scopes are None
+  - **Purpose**: Ensure backward compatibility with credentials that don't have scopes (JSON file users like @uratmangun)
+
 #### `TestKiroAuthManagerAuthTypeProperty`
 
 Tests for auth_type property and constructor with new parameters.

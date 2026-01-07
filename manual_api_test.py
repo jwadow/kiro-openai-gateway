@@ -272,10 +272,8 @@ def refresh_auth_token_aws_sso_oidc():
         "refresh_token": REFRESH_TOKEN,
     }
     
-    # Add scopes if available
-    if SCOPES:
-        data["scope"] = " ".join(SCOPES)
-    
+    # Note: scope parameter is NOT sent during refresh per OAuth 2.0 RFC 6749 Section 6
+    # AWS SSO OIDC uses the originally granted scopes automatically
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
     }
