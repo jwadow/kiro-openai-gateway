@@ -82,6 +82,26 @@ def extract_text_content(content: Any) -> str:
     return str(content)
 
 
+def get_tool_use_system_prompt_addition() -> str:
+    """
+    Generate system prompt addition that encourages tool use.
+    
+    Returns:
+        System prompt addition text
+    """
+    return (
+        "\n\n---\n"
+        "# CRITICAL: Tool Use Required\n\n"
+        "You MUST use tools to perform actions. NEVER respond with text like "
+        "\"let me check\", \"try fetching\", or \"I'll search\" without IMMEDIATELY "
+        "calling the appropriate tool in the same response.\n\n"
+        "WRONG: \"Let me search for that information.\"\n"
+        "RIGHT: [Call the search/fetch/read tool directly]\n\n"
+        "If you need to read a file, call Read. If you need to run a command, call Bash. "
+        "If you need to search, call the search tool. Do NOT describe actions - DO them."
+    )
+
+
 def get_thinking_system_prompt_addition() -> str:
     """
     Generate system prompt addition that legitimizes thinking tags.
@@ -522,6 +542,11 @@ def build_kiro_payload(
     if thinking_system_addition:
         system_prompt = system_prompt + thinking_system_addition if system_prompt else thinking_system_addition.strip()
     
+    # Add tool use encouragement if tools are present
+    if request_data.tools:
+        tool_use_addition = get_tool_use_system_prompt_addition()
+        system_prompt = system_prompt + tool_use_addition if system_prompt else tool_use_addition.strip()
+    
     # Merge adjacent messages with the same role
     merged_messages = merge_adjacent_messages(non_system_messages)
     
@@ -540,8 +565,15 @@ def build_kiro_payload(
         if first_msg.role == "user":
             original_content = extract_text_content(first_msg.content)
             first_msg.content = f"{system_prompt}\n\n{original_content}"
+            logger.debug(f"Added system prompt to first user message, new length: {len(first_msg.content)}")
     
     history = build_kiro_history(history_messages, model_id)
+    
+    # Debug: verify system prompt in history
+    if history and "Tool Use Instructions" in str(history[0]):
+        logger.debug("Tool Use Instructions confirmed in history")
+    elif system_prompt and "Tool Use Instructions" in system_prompt:
+        logger.warning("Tool Use Instructions in system_prompt but NOT in history!")
     
     # Current message (the last one)
     current_message = merged_messages[-1]
@@ -550,6 +582,10 @@ def build_kiro_payload(
     # If system prompt exists but history is empty - add to current message
     if system_prompt and not history:
         current_content = f"{system_prompt}\n\n{current_content}"
+    
+    # Add tool use reminder to current message if tools are present
+    if request_data.tools:
+        current_content = f"{current_content}\n\n[Remember: Use tools directly, don't just describe what to do]"
     
     # If current message is assistant, need to add it to history
     # and create user message "Continue"
