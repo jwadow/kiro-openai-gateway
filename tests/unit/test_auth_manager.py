@@ -964,10 +964,10 @@ class TestKiroAuthManagerAwsSsoOidcRefresh:
             assert url == expected_url
     
     @pytest.mark.asyncio
-    async def test_refresh_token_aws_sso_oidc_uses_form_urlencoded(self, mock_aws_sso_oidc_token_response):
+    async def test_refresh_token_aws_sso_oidc_uses_json_body(self, mock_aws_sso_oidc_token_response):
         """
-        What it does: Verifies form-urlencoded format usage.
-        Purpose: Ensure Content-Type = application/x-www-form-urlencoded.
+        What it does: Verifies JSON body format usage.
+        Purpose: Ensure request uses JSON body with camelCase keys.
         """
         print("Setup: Creating KiroAuthManager...")
         manager = KiroAuthManager(
@@ -991,17 +991,17 @@ class TestKiroAuthManagerAwsSsoOidcRefresh:
             
             await manager._refresh_token_aws_sso_oidc()
             
-            print("Verification: Content-Type = application/x-www-form-urlencoded...")
+            print("Verification: JSON body used...")
             call_args = mock_client.post.call_args
-            headers = call_args[1].get('headers', {})
-            print(f"Comparing Content-Type: Expected 'application/x-www-form-urlencoded', Got '{headers.get('Content-Type')}'")
-            assert headers.get('Content-Type') == 'application/x-www-form-urlencoded'
+            json_data = call_args[1].get('json', {})
+            assert json_data, "Should use json parameter, not data"
+            assert 'grantType' in json_data, "Should use camelCase keys"
     
     @pytest.mark.asyncio
     async def test_refresh_token_aws_sso_oidc_sends_correct_grant_type(self, mock_aws_sso_oidc_token_response):
         """
-        What it does: Verifies correct grant_type is sent.
-        Purpose: Ensure grant_type=refresh_token.
+        What it does: Verifies correct grantType is sent.
+        Purpose: Ensure grantType=refresh_token in JSON body.
         """
         print("Setup: Creating KiroAuthManager...")
         manager = KiroAuthManager(
@@ -1025,11 +1025,11 @@ class TestKiroAuthManagerAwsSsoOidcRefresh:
             
             await manager._refresh_token_aws_sso_oidc()
             
-            print("Verification: grant_type = refresh_token...")
+            print("Verification: grantType = refresh_token...")
             call_args = mock_client.post.call_args
-            data = call_args[1].get('data', {})
-            print(f"Comparing grant_type: Expected 'refresh_token', Got '{data.get('grant_type')}'")
-            assert data.get('grant_type') == 'refresh_token'
+            json_data = call_args[1].get('json', {})
+            print(f"Comparing grantType: Expected 'refresh_token', Got '{json_data.get('grantType')}'")
+            assert json_data.get('grantType') == 'refresh_token'
     
     @pytest.mark.asyncio
     async def test_refresh_token_aws_sso_oidc_updates_tokens(self, mock_aws_sso_oidc_token_response):
@@ -1132,16 +1132,16 @@ class TestKiroAuthManagerAwsSsoOidcRefresh:
             
             await manager._refresh_token_aws_sso_oidc()
             
-            print("Verification: scope NOT in request data...")
+            print("Verification: scope NOT in request JSON...")
             call_args = mock_client.post.call_args
-            data = call_args[1].get('data', {})
-            print(f"Request data keys: {list(data.keys())}")
-            assert 'scope' not in data, "scope should NOT be sent in refresh request"
+            json_data = call_args[1].get('json', {})
+            print(f"Request JSON keys: {list(json_data.keys())}")
+            assert 'scope' not in json_data, "scope should NOT be sent in refresh request"
             
             print("Verification: only required fields sent...")
-            expected_keys = {'grant_type', 'client_id', 'client_secret', 'refresh_token'}
-            print(f"Comparing keys: Expected {expected_keys}, Got {set(data.keys())}")
-            assert set(data.keys()) == expected_keys
+            expected_keys = {'grantType', 'clientId', 'clientSecret', 'refreshToken'}
+            print(f"Comparing keys: Expected {expected_keys}, Got {set(json_data.keys())}")
+            assert set(json_data.keys()) == expected_keys
     
     @pytest.mark.asyncio
     async def test_refresh_token_aws_sso_oidc_works_without_scopes(self, mock_aws_sso_oidc_token_response):
@@ -1176,10 +1176,10 @@ class TestKiroAuthManagerAwsSsoOidcRefresh:
             print("Verification: Token refreshed successfully...")
             assert manager._access_token == "new_aws_sso_access_token"
             
-            print("Verification: scope NOT in request data...")
+            print("Verification: scope NOT in request JSON...")
             call_args = mock_client.post.call_args
-            data = call_args[1].get('data', {})
-            assert 'scope' not in data
+            json_data = call_args[1].get('json', {})
+            assert 'scope' not in json_data
 
 
 # =============================================================================
