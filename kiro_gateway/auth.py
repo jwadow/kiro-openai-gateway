@@ -464,6 +464,10 @@ class KiroAuthManager:
             ValueError: If required credentials are not set
             httpx.HTTPError: On HTTP request error
         """
+        # Re-read credentials from SQLite to pick up fresh tokens after kiro-cli re-login
+        if self._sqlite_db:
+            self._load_credentials_from_sqlite(self._sqlite_db)
+        
         if not self._refresh_token:
             raise ValueError("Refresh token is not set")
         if not self._client_id:
