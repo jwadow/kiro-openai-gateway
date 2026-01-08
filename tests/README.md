@@ -808,7 +808,7 @@ Tests for application log capture (app_logs.txt).
 
 ### `tests/unit/test_converters.py`
 
-Unit tests for **OpenAI <-> Kiro** converters. **84 tests.**
+Unit tests for **OpenAI <-> Kiro** converters. **86 tests.**
 
 #### `TestExtractTextContent`
 
@@ -1101,6 +1101,16 @@ Tests for inject_thinking_tags function with thinking instruction.
 - **`test_long_tool_description_added_to_system_prompt()`**:
   - **What it does**: Verifies long tool descriptions integration in payload
   - **Purpose**: Ensure long descriptions are added to system prompt in payload
+
+**New tests for thinking tags + toolResults fix (GitHub issue #20):**
+
+- **`test_skips_thinking_tags_when_tool_results_present()`**:
+  - **What it does**: Verifies thinking tags are NOT injected when toolResults are present in current message
+  - **Purpose**: Fix GitHub issue #20 - OpenCode compaction returns 400 error when thinking tags + toolResults combination is sent to Kiro API
+
+- **`test_injects_thinking_tags_when_no_tool_results()`**:
+  - **What it does**: Verifies thinking tags ARE injected for normal user messages without tool results
+  - **Purpose**: Ensure fix for issue #20 doesn't break normal thinking tag injection
 
 ---
 
