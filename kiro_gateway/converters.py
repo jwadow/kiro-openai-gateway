@@ -565,10 +565,19 @@ def build_kiro_payload(
     if not current_content:
         current_content = "Continue"
     
+    # Build user_input_context first to check for toolResults
+    # Use processed tools (with short descriptions)
+    user_input_context = _build_user_input_context(request_data, current_message, processed_tools)
+    
     # Inject thinking tags if enabled (only for the current/last user message)
     # Must be AFTER empty content check to avoid injecting tags into "Continue"
-    if current_message.role == "user":
+    # Skip injection when toolResults are present - Kiro API rejects this combination
+    # (causes "Improperly formed request" 400 error, see GitHub issue #20)
+    has_tool_results = user_input_context and "toolResults" in user_input_context
+    if current_message.role == "user" and not has_tool_results:
         current_content = inject_thinking_tags(current_content)
+    elif has_tool_results:
+        logger.debug("Skipping thinking tag injection: toolResults present in current message")
     
     # Build userInputMessage
     user_input_message = {
@@ -577,9 +586,7 @@ def build_kiro_payload(
         "origin": "AI_EDITOR",
     }
     
-    # Add tools and tool_results if present
-    # Use processed tools (with short descriptions)
-    user_input_context = _build_user_input_context(request_data, current_message, processed_tools)
+    # Add user_input_context if present
     if user_input_context:
         user_input_message["userInputMessageContext"] = user_input_context
     

@@ -2044,3 +2044,74 @@ class TestBuildKiroPayload:
         print(f"Checking that tool in context has reference description...")
         tools_context = result["conversationState"]["currentMessage"]["userInputMessage"]["userInputMessageContext"]["tools"]
         assert "[Full documentation in system prompt" in tools_context[0]["toolSpecification"]["description"]
+    
+    def test_skips_thinking_tags_when_tool_results_present(self):
+        """
+        What it does: Verifies thinking tags are NOT injected when toolResults are present.
+        Purpose: Fix GitHub issue #20 - OpenCode compaction returns 400 error.
+        
+        When the last message contains tool results:
+        - Kiro API rejects requests with thinking tags + toolResults combination
+        - This causes "Improperly formed request" 400 error
+        - Fix: skip thinking tag injection when toolResults are in current message
+        """
+        print("Setup: Request where last message is a tool result...")
+        request = ChatCompletionRequest(
+            model="claude-sonnet-4-5",
+            messages=[
+                ChatMessage(role="user", content="Run a command"),
+                ChatMessage(
+                    role="assistant",
+                    content="I'll run the command",
+                    tool_calls=[{
+                        "id": "tool_1",
+                        "type": "function",
+                        "function": {"name": "bash", "arguments": "{}"}
+                    }]
+                ),
+                ChatMessage(role="tool", content="Command output here", tool_call_id="tool_1"),
+            ]
+        )
+        
+        print("Action: Building payload with FAKE_REASONING_ENABLED=True...")
+        with patch('kiro_gateway.converters.FAKE_REASONING_ENABLED', True):
+            with patch('kiro_gateway.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+                result = build_kiro_payload(request, "conv-123", "")
+        
+        current_msg = result["conversationState"]["currentMessage"]["userInputMessage"]
+        content = current_msg["content"]
+        context = current_msg.get("userInputMessageContext", {})
+        
+        print(f"Content: {repr(content[:100] if len(content) > 100 else content)}")
+        print(f"Has toolResults: {'toolResults' in context}")
+        
+        assert "toolResults" in context, "toolResults should be present"
+        assert "<thinking_mode>" not in content, "thinking tags should NOT be injected when toolResults present"
+        assert content == "Continue", "Content should be 'Continue' (no thinking tags)"
+    
+    def test_injects_thinking_tags_when_no_tool_results(self):
+        """
+        What it does: Verifies thinking tags ARE injected for normal user messages.
+        Purpose: Ensure fix for issue #20 doesn't break normal thinking tag injection.
+        """
+        print("Setup: Normal user message without tool results...")
+        request = ChatCompletionRequest(
+            model="claude-sonnet-4-5",
+            messages=[ChatMessage(role="user", content="Hello")]
+        )
+        
+        print("Action: Building payload with FAKE_REASONING_ENABLED=True...")
+        with patch('kiro_gateway.converters.FAKE_REASONING_ENABLED', True):
+            with patch('kiro_gateway.converters.FAKE_REASONING_MAX_TOKENS', 4000):
+                result = build_kiro_payload(request, "conv-123", "")
+        
+        current_msg = result["conversationState"]["currentMessage"]["userInputMessage"]
+        content = current_msg["content"]
+        context = current_msg.get("userInputMessageContext", {})
+        
+        print(f"Content starts with thinking tags: {'<thinking_mode>' in content}")
+        print(f"Has toolResults: {'toolResults' in context}")
+        
+        assert "toolResults" not in context, "toolResults should NOT be present"
+        assert "<thinking_mode>" in content, "thinking tags SHOULD be injected for normal messages"
+        assert "Hello" in content, "Original content should be preserved"
