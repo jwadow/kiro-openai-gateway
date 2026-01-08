@@ -25,3 +25,21 @@ async def test_openai_sse_is_wrapped_as_anthropic_sse():
     assert "event: message_delta" in joined
     assert "event: message_stop" in joined
     assert "tool_use" in joined
+
+
+@pytest.mark.asyncio
+async def test_tool_call_arguments_are_aggregated_across_deltas():
+    async def openai_gen():
+        yield 'data: {"choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"},"finish_reason":null}],"model":"m"}\n\n'
+        yield 'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"t","arguments":"{\\"a\\":"}}]},"finish_reason":null}],"model":"m"}\n\n'
+        yield 'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]},"finish_reason":null}],"model":"m"}\n\n'
+        yield 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"model":"m"}\n\n'
+        yield 'data: [DONE]\n\n'
+
+    out = []
+    async for chunk in stream_openai_sse_to_anthropic_sse(openai_gen(), model="m"):
+        out.append(chunk)
+
+    joined = "".join(out)
+    assert joined.count('"type": "tool_use"') == 1
+    assert '"input": {"a": 1}' in joined

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -65,3 +65,43 @@ class TestAnthropicRoutes:
         body = resp.json()
         assert body["type"] == "message"
         assert body["role"] == "assistant"
+
+    def test_batch_cancel_sets_canceled_to_remaining_requests(self, test_client, valid_proxy_api_key):
+        def _fake_create_task(coro):
+            coro.close()
+            return Mock()
+
+        with patch("kiro_gateway.routes.asyncio.create_task", new=_fake_create_task):
+            resp = test_client.post(
+                "/v1/messages/batches",
+                headers={"x-api-key": valid_proxy_api_key, "anthropic-version": "2023-06-01"},
+                json={
+                    "requests": [
+                        {
+                            "custom_id": f"r{i}",
+                            "params": {
+                                "model": "claude-sonnet-4-5",
+                                "max_tokens": 10,
+                                "messages": [{"role": "user", "content": "hi"}],
+                                "stream": False,
+                            },
+                        }
+                        for i in range(5)
+                    ]
+                },
+            )
+        assert resp.status_code == 200
+        batch_id = resp.json()["id"]
+
+        from kiro_gateway import routes as routes_mod
+
+        routes_mod._anthropic_batches[batch_id]["request_counts"]["succeeded"] = 1
+        routes_mod._anthropic_batches[batch_id]["request_counts"]["errored"] = 1
+
+        cancel = test_client.post(
+            f"/v1/messages/batches/{batch_id}/cancel",
+            headers={"x-api-key": valid_proxy_api_key, "anthropic-version": "2023-06-01"},
+        )
+        assert cancel.status_code == 200
+        counts = cancel.json()["request_counts"]
+        assert counts["canceled"] == 3

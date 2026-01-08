@@ -39,7 +39,7 @@ async def stream_openai_sse_to_anthropic_sse(
     content_block_index = 0
     text_block_open = True
 
-    tool_calls_seen: list[dict] = []
+    tool_calls_by_index: dict[int, dict[str, Any]] = {}
     finish_reason: Optional[str] = None
     usage: Optional[dict] = None
 
@@ -103,8 +103,6 @@ async def stream_openai_sse_to_anthropic_sse(
 
             delta_tool_calls = delta.get("tool_calls")
             if delta_tool_calls:
-                tool_calls_seen.extend(delta_tool_calls)
-
                 if text_block_open:
                     yield _sse_event(
                         "content_block_stop",
@@ -113,28 +111,24 @@ async def stream_openai_sse_to_anthropic_sse(
                     text_block_open = False
 
                 for tc in delta_tool_calls:
-                    content_block_index += 1
-                    func = tc.get("function") or {}
-                    args_raw = func.get("arguments") or "{}"
-                    tool_block = {
-                        "type": "tool_use",
-                        "id": tc.get("id") or "",
-                        "name": func.get("name") or "",
-                        "input": _safe_json_loads(args_raw),
-                    }
-
-                    yield _sse_event(
-                        "content_block_start",
+                    tc_index = int(tc.get("index") or 0)
+                    func_delta = tc.get("function") or {}
+                    entry = tool_calls_by_index.setdefault(
+                        tc_index,
                         {
-                            "type": "content_block_start",
-                            "index": content_block_index,
-                            "content_block": tool_block,
+                            "index": tc_index,
+                            "id": None,
+                            "type": tc.get("type") or "function",
+                            "function": {"name": None, "arguments": ""},
                         },
                     )
-                    yield _sse_event(
-                        "content_block_stop",
-                        {"type": "content_block_stop", "index": content_block_index},
-                    )
+
+                    if tc.get("id"):
+                        entry["id"] = tc.get("id")
+                    if func_delta.get("name"):
+                        entry["function"]["name"] = func_delta.get("name")
+                    if func_delta.get("arguments") is not None:
+                        entry["function"]["arguments"] += func_delta.get("arguments")
 
     except Exception as e:
         yield _sse_event(
@@ -144,6 +138,31 @@ async def stream_openai_sse_to_anthropic_sse(
         return
 
     if text_block_open:
+        yield _sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": content_block_index},
+        )
+
+    tool_calls_seen = [tool_calls_by_index[i] for i in sorted(tool_calls_by_index.keys())]
+    for tc in tool_calls_seen:
+        content_block_index += 1
+        func = tc.get("function") or {}
+        args_raw = func.get("arguments") or "{}"
+        tool_block = {
+            "type": "tool_use",
+            "id": tc.get("id") or "",
+            "name": func.get("name") or "",
+            "input": _safe_json_loads(args_raw),
+        }
+
+        yield _sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": content_block_index,
+                "content_block": tool_block,
+            },
+        )
         yield _sse_event(
             "content_block_stop",
             {"type": "content_block_stop", "index": content_block_index},

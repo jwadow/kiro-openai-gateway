@@ -278,7 +278,11 @@ async def anthropic_messages(request: Request, request_data: AnthropicCreateMess
     http_client = KiroHttpClient(auth_manager)
     url = f"{auth_manager.api_host}/generateAssistantResponse"
 
-    response = await http_client.request_with_retry("POST", url, kiro_payload, stream=True)
+    try:
+        response = await http_client.request_with_retry("POST", url, kiro_payload, stream=True)
+    except Exception as e:
+        await http_client.close()
+        return _anthropic_error(str(e), error_type="api_error")
 
     if response.status_code != 200:
         try:
@@ -318,16 +322,19 @@ async def anthropic_messages(request: Request, request_data: AnthropicCreateMess
 
         return StreamingResponse(anthropic_stream(), media_type="text/event-stream")
 
-    openai_response = await collect_stream_response(
-        http_client.client,
-        response,
-        openai_request.model,
-        model_cache,
-        auth_manager,
-        request_messages=messages_for_tokenizer,
-        request_tools=tools_for_tokenizer,
-    )
-    await http_client.close()
+    try:
+        openai_response = await collect_stream_response(
+            http_client.client,
+            response,
+            openai_request.model,
+            model_cache,
+            auth_manager,
+            request_messages=messages_for_tokenizer,
+            request_tools=tools_for_tokenizer,
+        )
+    finally:
+        await http_client.close()
+
     return JSONResponse(content=openai_chat_completion_to_anthropic_message(openai_response))
 
 
@@ -373,20 +380,33 @@ async def _run_anthropic_batch(app, batch_id: str) -> None:
 
             http_client = KiroHttpClient(auth_manager)
             url = f"{auth_manager.api_host}/generateAssistantResponse"
-            response = await http_client.request_with_retry("POST", url, kiro_payload, stream=True)
+            try:
+                response = await http_client.request_with_retry("POST", url, kiro_payload, stream=True)
 
-            messages_for_tokenizer = [m.model_dump() for m in openai_req.messages]
-            tools_for_tokenizer = [t.model_dump() for t in openai_req.tools] if openai_req.tools else None
-            openai_response = await collect_stream_response(
-                http_client.client,
-                response,
-                openai_req.model,
-                model_cache,
-                auth_manager,
-                request_messages=messages_for_tokenizer,
-                request_tools=tools_for_tokenizer,
-            )
-            await http_client.close()
+                if response.status_code != 200:
+                    try:
+                        error_text = (await response.aread()).decode("utf-8", errors="replace")
+                    except Exception:
+                        error_text = "Unknown error"
+                    try:
+                        await response.aclose()
+                    except Exception:
+                        pass
+                    raise RuntimeError(f"Upstream API error: {error_text}")
+
+                messages_for_tokenizer = [m.model_dump() for m in openai_req.messages]
+                tools_for_tokenizer = [t.model_dump() for t in openai_req.tools] if openai_req.tools else None
+                openai_response = await collect_stream_response(
+                    http_client.client,
+                    response,
+                    openai_req.model,
+                    model_cache,
+                    auth_manager,
+                    request_messages=messages_for_tokenizer,
+                    request_tools=tools_for_tokenizer,
+                )
+            finally:
+                await http_client.close()
 
             _anthropic_batch_results[batch_id].append(
                 {
@@ -412,7 +432,11 @@ async def _run_anthropic_batch(app, batch_id: str) -> None:
         finally:
             counts["processing"] = max(0, counts["processing"] - 1)
 
-    if batch.get("processing_status") != "canceled":
+    if batch.get("processing_status") == "canceled":
+        total = len(requests_list)
+        counts["canceled"] = max(0, total - counts["succeeded"] - counts["errored"])
+        counts["processing"] = 0
+    else:
         batch["processing_status"] = "ended"
 
 
@@ -470,7 +494,9 @@ async def cancel_message_batch(request: Request, batch_id: str):
         return {k: v for k, v in batch.items() if k != "requests"}
 
     batch["processing_status"] = "canceled"
-    batch["request_counts"]["canceled"] = len(batch.get("requests") or [])
+    counts = batch["request_counts"]
+    total = len(batch.get("requests") or [])
+    counts["canceled"] = max(0, total - counts["succeeded"] - counts["errored"])
     return {k: v for k, v in batch.items() if k != "requests"}
 
 
