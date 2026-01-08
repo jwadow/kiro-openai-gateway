@@ -1415,3 +1415,104 @@ class TestKiroAuthManagerSsoRegionSeparation:
         print("Verification: _refresh_url points to us-east-1...")
         assert "us-east-1" in manager._refresh_url
         assert "eu-west-1" not in manager._refresh_url
+    
+    @pytest.mark.asyncio
+    async def test_refresh_token_aws_sso_oidc_reloads_sqlite_before_refresh(
+        self, tmp_path, mock_aws_sso_oidc_token_response
+    ):
+        """
+        What it does: Verifies SQLite credentials are reloaded before token refresh.
+        Purpose: Pick up fresh tokens after kiro-cli re-login without container restart.
+        """
+        import sqlite3
+        import json
+        
+        # Setup: Create initial SQLite database
+        db_file = tmp_path / "data.sqlite3"
+        conn = sqlite3.connect(str(db_file))
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE auth_kv (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        
+        # Initial token data (will become stale)
+        initial_token_data = {
+            "access_token": "old_access_token",
+            "refresh_token": "old_refresh_token",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "region": "us-east-1"
+        }
+        cursor.execute(
+            "INSERT INTO auth_kv (key, value) VALUES (?, ?)",
+            ("codewhisperer:odic:token", json.dumps(initial_token_data))
+        )
+        
+        registration_data = {
+            "client_id": "test_client_id",
+            "client_secret": "test_client_secret",
+            "region": "us-east-1"
+        }
+        cursor.execute(
+            "INSERT INTO auth_kv (key, value) VALUES (?, ?)",
+            ("codewhisperer:odic:device-registration", json.dumps(registration_data))
+        )
+        
+        conn.commit()
+        conn.close()
+        
+        print("Setup: Creating KiroAuthManager with SQLite...")
+        manager = KiroAuthManager(sqlite_db=str(db_file))
+        
+        print("Verification: Initial refresh_token loaded...")
+        assert manager._refresh_token == "old_refresh_token"
+        
+        # Simulate kiro-cli updating the SQLite with fresh tokens
+        print("Action: Simulating kiro-cli token refresh (updating SQLite)...")
+        conn = sqlite3.connect(str(db_file))
+        cursor = conn.cursor()
+        
+        new_token_data = {
+            "access_token": "new_access_token",
+            "refresh_token": "new_refresh_token_from_kiro_cli",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "region": "us-east-1"
+        }
+        cursor.execute(
+            "UPDATE auth_kv SET value = ? WHERE key = ?",
+            (json.dumps(new_token_data), "codewhisperer:odic:token")
+        )
+        conn.commit()
+        conn.close()
+        
+        # Manager still has old token in memory
+        print("Verification: Manager still has old refresh_token in memory...")
+        assert manager._refresh_token == "old_refresh_token"
+        
+        # Mock HTTP client for the refresh call
+        print("Action: Calling _refresh_token_aws_sso_oidc...")
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value=mock_aws_sso_oidc_token_response())
+        mock_response.raise_for_status = Mock()
+        
+        with patch('kiro_gateway.auth.httpx.AsyncClient') as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+            
+            await manager._refresh_token_aws_sso_oidc()
+            
+            # Verify that the request used the NEW refresh token from SQLite
+            print("Verification: Request used new refresh_token from SQLite...")
+            call_args = mock_client.post.call_args
+            data = call_args[1].get('data', {})
+            
+            print(f"Refresh token sent: {data.get('refresh_token')}")
+            assert data.get('refresh_token') == "new_refresh_token_from_kiro_cli", \
+                "Should use fresh token from SQLite, not stale token from memory"
