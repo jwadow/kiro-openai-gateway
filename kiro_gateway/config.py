@@ -96,7 +96,7 @@ SERVER_PORT: int = int(os.getenv("SERVER_PORT", str(DEFAULT_SERVER_PORT)))
 # ==================================================================================================
 
 # API key for proxy access (clients must pass it in Authorization header)
-PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", "my-super-secret-password-123")
+PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", "changeme_proxy_secret")
 
 # ==================================================================================================
 # Kiro API Credentials

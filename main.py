@@ -41,6 +41,7 @@ Priority: CLI args > Environment variables > Default values
 
 import argparse
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -227,14 +228,15 @@ def validate_configuration() -> None:
     # Note: Credential loading details are logged by KiroAuthManager
 
 
-# Run configuration validation on import
-validate_configuration()
+def _is_running_tests() -> bool:
+    return "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ
 
-# Warn about deprecated DEBUG_LAST_REQUEST if used
-_warn_deprecated_debug_setting()
 
-# Warn about suboptimal timeout configuration
-_warn_timeout_configuration()
+# Run configuration validation on import (skip during tests)
+if not _is_running_tests():
+    validate_configuration()
+    _warn_deprecated_debug_setting()
+    _warn_timeout_configuration()
 
 
 # --- Lifespan Manager ---

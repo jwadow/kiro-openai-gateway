@@ -28,6 +28,7 @@ Contains all API endpoints:
 
 import asyncio
 import json
+import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import AsyncGenerator
@@ -77,6 +78,10 @@ except ImportError:
 # --- Security scheme ---
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 anthropic_api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
+
+
+def validate_api_key(api_key: str) -> bool:
+    return bool(api_key) and secrets.compare_digest(api_key, PROXY_API_KEY)
 
 
 async def verify_api_key(auth_header: str = Security(api_key_header)) -> bool:
