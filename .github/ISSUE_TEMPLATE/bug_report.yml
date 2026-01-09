@@ -1,6 +1,6 @@
 name: 🐛 Bug Report
 description: Something isn't working? Report it here
-title: "[Bug]: "
+title: "BUG: "
 labels: ["bug"]
 body:
   - type: markdown
@@ -13,13 +13,14 @@ body:
         2. Restart the gateway
         3. Reproduce the error
         4. Attach files from `debug_logs/` folder below
+        **Note: For the "Improperly formed request" error logs are required!**
 
   - type: input
     id: version
     attributes:
-      label: Gateway Version
+      label: Kiro Gateway Version
       description: Which version are you using?
-      placeholder: "e.g. v1.0.6"
+      placeholder: "e.g. v2.0.0-rc.1"
     validations:
       required: true
 
