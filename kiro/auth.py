@@ -171,7 +171,7 @@ class KiroAuthManager:
             logger.info("Detected auth type: AWS SSO OIDC (kiro-cli)")
         else:
             self._auth_type = AuthType.KIRO_DESKTOP
-            logger.debug("Using auth type: Kiro Desktop")
+            logger.info("Detected auth type: Kiro Desktop")
     
     def _load_credentials_from_sqlite(self, db_path: str) -> None:
         """
