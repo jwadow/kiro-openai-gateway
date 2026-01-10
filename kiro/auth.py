@@ -565,12 +565,21 @@ class KiroAuthManager:
         # Save to file
         self._save_credentials_to_file()
     
+    def _is_token_expired(self) -> bool:
+        """Check if token is actually expired (not just expiring soon)."""
+        if not self._expires_at:
+            return True
+        now = datetime.now(timezone.utc)
+        return now >= self._expires_at
+
     async def get_access_token(self) -> str:
         """
         Returns a valid access_token, refreshing it if necessary.
         
         Thread-safe method using asyncio.Lock.
-        Automatically refreshes the token if it has expired or is about to expire.
+        For SQLite mode: re-reads from SQLite to stay in sync with kiro-cli,
+        and uses token until expired without attempting refresh (kiro-cli owns refresh).
+        For other modes: refreshes token when expiring soon.
         
         Returns:
             Valid access token
@@ -579,6 +588,18 @@ class KiroAuthManager:
             ValueError: If unable to obtain access token
         """
         async with self._lock:
+            # SQLite mode: re-read to pick up tokens refreshed by kiro-cli
+            if self._sqlite_db:
+                self._load_credentials_from_sqlite(self._sqlite_db)
+                # Only error if token is actually expired
+                # (kiro-cli owns the refresh token, gateway can't refresh)
+                if self._is_token_expired():
+                    raise ValueError("Token expired. Please run 'kiro-cli login' to refresh.")
+                if self.is_token_expiring_soon():
+                    logger.warning("Token expiring soon. Run 'kiro-cli login' to refresh.")
+                return self._access_token
+            
+            # Non-SQLite mode: refresh as before
             if not self._access_token or self.is_token_expiring_soon():
                 await self._refresh_token_request()
             
