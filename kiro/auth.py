@@ -102,6 +102,7 @@ class KiroAuthManager:
     def __init__(
         self,
         refresh_token: Optional[str] = None,
+        refresh_tokens: Optional[list[str]] = None,
         profile_arn: Optional[str] = None,
         region: str = "us-east-1",
         creds_file: Optional[str] = None,
@@ -113,7 +114,8 @@ class KiroAuthManager:
         Initializes the authentication manager.
         
         Args:
-            refresh_token: Refresh token for obtaining access token
+            refresh_token: Refresh token for obtaining access token (deprecated, use refresh_tokens)
+            refresh_tokens: List of refresh tokens for fallback/rotation
             profile_arn: AWS CodeWhisperer profile ARN
             region: AWS region (default: us-east-1)
             creds_file: Path to JSON file with credentials (optional)
@@ -122,7 +124,14 @@ class KiroAuthManager:
             sqlite_db: Path to kiro-cli SQLite database (optional)
                        Default location: ~/.local/share/kiro-cli/data.sqlite3
         """
-        self._refresh_token = refresh_token
+        if refresh_tokens:
+            self._refresh_tokens = refresh_tokens
+        elif refresh_token:
+            self._refresh_tokens = [refresh_token]
+        else:
+            self._refresh_tokens = []
+        self._current_token_index = 0
+        self._refresh_token = self._refresh_tokens[0] if self._refresh_tokens else None
         self._profile_arn = profile_arn
         self._region = region
         self._creds_file = creds_file

@@ -56,6 +56,7 @@ from kiro.config import (
     APP_DESCRIPTION,
     APP_VERSION,
     REFRESH_TOKEN,
+    REFRESH_TOKENS,
     PROFILE_ARN,
     REGION,
     KIRO_CREDS_FILE,
@@ -311,7 +312,8 @@ async def lifespan(app: FastAPI):
     # Create AuthManager
     # Priority: SQLite DB > JSON file > environment variables
     app.state.auth_manager = KiroAuthManager(
-        refresh_token=REFRESH_TOKEN,
+        refresh_tokens=REFRESH_TOKENS if REFRESH_TOKENS else None,
+        refresh_token=REFRESH_TOKEN if not REFRESH_TOKENS else None,
         profile_arn=PROFILE_ARN,
         region=REGION,
         creds_file=KIRO_CREDS_FILE if KIRO_CREDS_FILE else None,

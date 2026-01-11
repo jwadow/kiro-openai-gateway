@@ -102,8 +102,12 @@ PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", "my-super-secret-password-123")
 # Kiro API Credentials
 # ==================================================================================================
 
-# Refresh token for updating access token
-REFRESH_TOKEN: str = os.getenv("REFRESH_TOKEN", "")
+# Refresh token(s) for updating access token
+# Supports multiple tokens separated by commas for fallback/rotation
+_REFRESH_TOKEN_RAW: str = os.getenv("REFRESH_TOKEN", "")
+REFRESH_TOKENS: list[str] = [t.strip() for t in _REFRESH_TOKEN_RAW.split(",") if t.strip()]
+# For backward compatibility, expose first token as REFRESH_TOKEN
+REFRESH_TOKEN: str = REFRESH_TOKENS[0] if REFRESH_TOKENS else ""
 
 # Profile ARN for AWS CodeWhisperer
 PROFILE_ARN: str = os.getenv("PROFILE_ARN", "")
