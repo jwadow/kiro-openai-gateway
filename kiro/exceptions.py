@@ -87,7 +87,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     
     logger.error(f"Validation error (422): {sanitized_errors}")
     # Log body at DEBUG level to avoid cluttering console with potentially large payloads
-    logger.debug(f"Request body: {body_str[:500]}...")
+    # logger.debug(f"Request body: {body_str[:500]}...")
     
     # Flush debug logs for validation errors
     # This is called AFTER middleware has initialized debug logging,
