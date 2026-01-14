@@ -34,12 +34,14 @@ from pydantic import BaseModel, Field
 # Models for /v1/models endpoint
 # ==================================================================================================
 
+
 class OpenAIModel(BaseModel):
     """
     Data model for describing an AI model in OpenAI format.
-    
+
     Used in the /v1/models endpoint response.
     """
+
     id: str
     object: str = "model"
     created: int = Field(default_factory=lambda: int(time.time()))
@@ -50,9 +52,10 @@ class OpenAIModel(BaseModel):
 class ModelList(BaseModel):
     """
     List of models in OpenAI format.
-    
+
     Response of GET /v1/models endpoint.
     """
+
     object: str = "list"
     data: List[OpenAIModel]
 
@@ -61,13 +64,14 @@ class ModelList(BaseModel):
 # Models for /v1/chat/completions endpoint
 # ==================================================================================================
 
+
 class ChatMessage(BaseModel):
     """
     Chat message in OpenAI format.
-    
+
     Supports various roles (user, assistant, system, tool)
     and various content formats (string, list, object).
-    
+
     Attributes:
         role: Sender role (user, assistant, system, tool)
         content: Message content (can be string, list, or None)
@@ -75,24 +79,26 @@ class ChatMessage(BaseModel):
         tool_calls: List of tool calls (for assistant)
         tool_call_id: Tool call ID (for tool)
     """
+
     role: str
     content: Optional[Union[str, List[Any], Any]] = None
     name: Optional[str] = None
     tool_calls: Optional[List[Any]] = None
     tool_call_id: Optional[str] = None
-    
+
     model_config = {"extra": "allow"}
 
 
 class ToolFunction(BaseModel):
     """
     Tool function description.
-    
+
     Attributes:
         name: Function name
         description: Function description
         parameters: JSON Schema of function parameters
     """
+
     name: str
     description: Optional[str] = None
     parameters: Optional[Dict[str, Any]] = None
@@ -101,11 +107,12 @@ class ToolFunction(BaseModel):
 class Tool(BaseModel):
     """
     Tool in OpenAI format.
-    
+
     Attributes:
         type: Tool type (usually "function")
         function: Function description
     """
+
     type: str = "function"
     function: ToolFunction
 
@@ -113,13 +120,13 @@ class Tool(BaseModel):
 class ChatCompletionRequest(BaseModel):
     """
     Request for response generation in OpenAI Chat Completions API format.
-    
+
     Supports all standard OpenAI API fields, including:
     - Basic parameters (model, messages, stream)
     - Generation parameters (temperature, top_p, max_tokens)
     - Tools (function calling)
     - Additional parameters (ignored but accepted for compatibility)
-    
+
     Attributes:
         model: Model ID for generation
         messages: List of chat messages
@@ -135,10 +142,11 @@ class ChatCompletionRequest(BaseModel):
         tools: List of available tools
         tool_choice: Tool selection strategy
     """
+
     model: str
     messages: Annotated[List[ChatMessage], Field(min_length=1)]
     stream: bool = False
-    
+
     # Generation parameters
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -148,11 +156,11 @@ class ChatCompletionRequest(BaseModel):
     stop: Optional[Union[str, List[str]]] = None
     presence_penalty: Optional[float] = None
     frequency_penalty: Optional[float] = None
-    
+
     # Tools (function calling)
     tools: Optional[List[Tool]] = None
     tool_choice: Optional[Union[str, Dict]] = None
-    
+
     # Compatibility fields (ignored)
     stream_options: Optional[Dict[str, Any]] = None
     logit_bias: Optional[Dict[str, float]] = None
@@ -161,7 +169,7 @@ class ChatCompletionRequest(BaseModel):
     user: Optional[str] = None
     seed: Optional[int] = None
     parallel_tool_calls: Optional[bool] = None
-    
+
     model_config = {"extra": "allow"}
 
 
@@ -169,15 +177,17 @@ class ChatCompletionRequest(BaseModel):
 # Models for responses
 # ==================================================================================================
 
+
 class ChatCompletionChoice(BaseModel):
     """
     Single response variant in Chat Completion.
-    
+
     Attributes:
         index: Variant index
         message: Response message
         finish_reason: Completion reason (stop, tool_calls, length)
     """
+
     index: int = 0
     message: Dict[str, Any]
     finish_reason: Optional[str] = None
@@ -186,13 +196,14 @@ class ChatCompletionChoice(BaseModel):
 class ChatCompletionUsage(BaseModel):
     """
     Token usage information.
-    
+
     Attributes:
         prompt_tokens: Number of tokens in request
         completion_tokens: Number of tokens in response
         total_tokens: Total number of tokens
         credits_used: Credits used (Kiro-specific)
     """
+
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -202,7 +213,7 @@ class ChatCompletionUsage(BaseModel):
 class ChatCompletionResponse(BaseModel):
     """
     Full Chat Completion response (non-streaming).
-    
+
     Attributes:
         id: Unique response ID
         object: Object type ("chat.completion")
@@ -211,6 +222,7 @@ class ChatCompletionResponse(BaseModel):
         choices: List of response variants
         usage: Token usage information
     """
+
     id: str
     object: str = "chat.completion"
     created: int = Field(default_factory=lambda: int(time.time()))
@@ -222,12 +234,13 @@ class ChatCompletionResponse(BaseModel):
 class ChatCompletionChunkDelta(BaseModel):
     """
     Delta of changes in streaming chunk.
-    
+
     Attributes:
         role: Role (only in first chunk)
         content: New content
         tool_calls: New tool calls
     """
+
     role: Optional[str] = None
     content: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
@@ -236,12 +249,13 @@ class ChatCompletionChunkDelta(BaseModel):
 class ChatCompletionChunkChoice(BaseModel):
     """
     Single variant in streaming chunk.
-    
+
     Attributes:
         index: Variant index
         delta: Delta of changes
         finish_reason: Completion reason (only in last chunk)
     """
+
     index: int = 0
     delta: ChatCompletionChunkDelta
     finish_reason: Optional[str] = None
@@ -250,7 +264,7 @@ class ChatCompletionChunkChoice(BaseModel):
 class ChatCompletionChunk(BaseModel):
     """
     Streaming chunk in OpenAI format.
-    
+
     Attributes:
         id: Unique response ID
         object: Object type ("chat.completion.chunk")
@@ -259,6 +273,7 @@ class ChatCompletionChunk(BaseModel):
         choices: List of variants
         usage: Usage information (only in last chunk)
     """
+
     id: str
     object: str = "chat.completion.chunk"
     created: int = Field(default_factory=lambda: int(time.time()))

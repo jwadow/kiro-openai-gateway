@@ -27,6 +27,7 @@ from kiro.cache import ModelInfoCache
 # Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def mock_model_cache():
     """
@@ -38,10 +39,22 @@ def mock_model_cache():
     # Directly populate cache (without async update)
     cache._cache = {
         "auto": {"modelId": "auto", "modelName": "Auto"},
-        "claude-sonnet-4.5": {"modelId": "claude-sonnet-4.5", "modelName": "Claude Sonnet 4.5"},
-        "claude-sonnet-4": {"modelId": "claude-sonnet-4", "modelName": "Claude Sonnet 4"},
-        "claude-haiku-4.5": {"modelId": "claude-haiku-4.5", "modelName": "Claude Haiku 4.5"},
-        "claude-opus-4.5": {"modelId": "claude-opus-4.5", "modelName": "Claude Opus 4.5"},
+        "claude-sonnet-4.5": {
+            "modelId": "claude-sonnet-4.5",
+            "modelName": "Claude Sonnet 4.5",
+        },
+        "claude-sonnet-4": {
+            "modelId": "claude-sonnet-4",
+            "modelName": "Claude Sonnet 4",
+        },
+        "claude-haiku-4.5": {
+            "modelId": "claude-haiku-4.5",
+            "modelName": "Claude Haiku 4.5",
+        },
+        "claude-opus-4.5": {
+            "modelId": "claude-opus-4.5",
+            "modelName": "Claude Opus 4.5",
+        },
     }
     return cache
 
@@ -79,19 +92,20 @@ def resolver_without_hidden(mock_model_cache):
 # TestNormalizeModelName - Tests for model name normalization
 # =============================================================================
 
+
 class TestNormalizeModelName:
     """
     Tests for normalize_model_name() function.
-    
+
     Checks conversion of client formats to Kiro format:
     - Dashes → dots for minor versions
     - Removal of date suffix (20251001)
     - Removal of 'latest' suffix
     - Legacy format (claude-3-7-sonnet)
     """
-    
+
     # === Standard format with minor version ===
-    
+
     def test_normalizes_haiku_dash_to_dot(self):
         """
         What it does: claude-haiku-4-5 → claude-haiku-4.5
@@ -99,10 +113,10 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-haiku-4-5'...")
         result = normalize_model_name("claude-haiku-4-5")
-        
+
         print(f"Comparing result: Expected 'claude-haiku-4.5', Got '{result}'")
         assert result == "claude-haiku-4.5"
-    
+
     def test_normalizes_sonnet_dash_to_dot(self):
         """
         What it does: claude-sonnet-4-5 → claude-sonnet-4.5
@@ -110,10 +124,10 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-sonnet-4-5'...")
         result = normalize_model_name("claude-sonnet-4-5")
-        
+
         print(f"Comparing result: Expected 'claude-sonnet-4.5', Got '{result}'")
         assert result == "claude-sonnet-4.5"
-    
+
     def test_normalizes_opus_dash_to_dot(self):
         """
         What it does: claude-opus-4-5 → claude-opus-4.5
@@ -121,12 +135,12 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-opus-4-5'...")
         result = normalize_model_name("claude-opus-4-5")
-        
+
         print(f"Comparing result: Expected 'claude-opus-4.5', Got '{result}'")
         assert result == "claude-opus-4.5"
-    
+
     # === Removal of date suffix ===
-    
+
     def test_strips_date_suffix_haiku(self):
         """
         What it does: claude-haiku-4-5-20251001 → claude-haiku-4.5
@@ -134,10 +148,10 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-haiku-4-5-20251001'...")
         result = normalize_model_name("claude-haiku-4-5-20251001")
-        
+
         print(f"Comparing result: Expected 'claude-haiku-4.5', Got '{result}'")
         assert result == "claude-haiku-4.5"
-    
+
     def test_strips_date_suffix_sonnet(self):
         """
         What it does: claude-sonnet-4-5-20250929 → claude-sonnet-4.5
@@ -145,10 +159,10 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-sonnet-4-5-20250929'...")
         result = normalize_model_name("claude-sonnet-4-5-20250929")
-        
+
         print(f"Comparing result: Expected 'claude-sonnet-4.5', Got '{result}'")
         assert result == "claude-sonnet-4.5"
-    
+
     def test_strips_date_suffix_opus(self):
         """
         What it does: claude-opus-4-5-20251101 → claude-opus-4.5
@@ -156,12 +170,12 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-opus-4-5-20251101'...")
         result = normalize_model_name("claude-opus-4-5-20251101")
-        
+
         print(f"Comparing result: Expected 'claude-opus-4.5', Got '{result}'")
         assert result == "claude-opus-4.5"
-    
+
     # === Removal of 'latest' suffix ===
-    
+
     def test_strips_latest_suffix(self):
         """
         What it does: claude-haiku-4-5-latest → claude-haiku-4.5
@@ -169,12 +183,12 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-haiku-4-5-latest'...")
         result = normalize_model_name("claude-haiku-4-5-latest")
-        
+
         print(f"Comparing result: Expected 'claude-haiku-4.5', Got '{result}'")
         assert result == "claude-haiku-4.5"
-    
+
     # === Standard format without minor version ===
-    
+
     def test_keeps_model_without_minor(self):
         """
         What it does: claude-sonnet-4 → claude-sonnet-4
@@ -182,10 +196,10 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-sonnet-4'...")
         result = normalize_model_name("claude-sonnet-4")
-        
+
         print(f"Comparing result: Expected 'claude-sonnet-4', Got '{result}'")
         assert result == "claude-sonnet-4"
-    
+
     def test_strips_date_from_model_without_minor(self):
         """
         What it does: claude-sonnet-4-20250514 → claude-sonnet-4
@@ -193,12 +207,12 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-sonnet-4-20250514'...")
         result = normalize_model_name("claude-sonnet-4-20250514")
-        
+
         print(f"Comparing result: Expected 'claude-sonnet-4', Got '{result}'")
         assert result == "claude-sonnet-4"
-    
+
     # === Legacy format (claude-X-Y-family) ===
-    
+
     def test_normalizes_legacy_format(self):
         """
         What it does: claude-3-7-sonnet → claude-3.7-sonnet
@@ -206,10 +220,10 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-3-7-sonnet'...")
         result = normalize_model_name("claude-3-7-sonnet")
-        
+
         print(f"Comparing result: Expected 'claude-3.7-sonnet', Got '{result}'")
         assert result == "claude-3.7-sonnet"
-    
+
     def test_normalizes_legacy_format_with_date(self):
         """
         What it does: claude-3-7-sonnet-20250219 → claude-3.7-sonnet
@@ -217,10 +231,10 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-3-7-sonnet-20250219'...")
         result = normalize_model_name("claude-3-7-sonnet-20250219")
-        
+
         print(f"Comparing result: Expected 'claude-3.7-sonnet', Got '{result}'")
         assert result == "claude-3.7-sonnet"
-    
+
     def test_normalizes_legacy_haiku(self):
         """
         What it does: claude-3-5-haiku → claude-3.5-haiku
@@ -228,10 +242,10 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-3-5-haiku'...")
         result = normalize_model_name("claude-3-5-haiku")
-        
+
         print(f"Comparing result: Expected 'claude-3.5-haiku', Got '{result}'")
         assert result == "claude-3.5-haiku"
-    
+
     def test_normalizes_legacy_opus(self):
         """
         What it does: claude-3-0-opus → claude-3.0-opus
@@ -239,12 +253,12 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-3-0-opus'...")
         result = normalize_model_name("claude-3-0-opus")
-        
+
         print(f"Comparing result: Expected 'claude-3.0-opus', Got '{result}'")
         assert result == "claude-3.0-opus"
-    
+
     # === Already normalized (passthrough) ===
-    
+
     def test_passthrough_already_normalized_haiku(self):
         """
         What it does: claude-haiku-4.5 → claude-haiku-4.5
@@ -252,10 +266,10 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-haiku-4.5'...")
         result = normalize_model_name("claude-haiku-4.5")
-        
+
         print(f"Comparing result: Expected 'claude-haiku-4.5', Got '{result}'")
         assert result == "claude-haiku-4.5"
-    
+
     def test_passthrough_already_normalized_sonnet(self):
         """
         What it does: claude-sonnet-4.5 → claude-sonnet-4.5
@@ -263,10 +277,10 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'claude-sonnet-4.5'...")
         result = normalize_model_name("claude-sonnet-4.5")
-        
+
         print(f"Comparing result: Expected 'claude-sonnet-4.5', Got '{result}'")
         assert result == "claude-sonnet-4.5"
-    
+
     def test_passthrough_auto(self):
         """
         What it does: auto → auto
@@ -274,12 +288,12 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'auto'...")
         result = normalize_model_name("auto")
-        
+
         print(f"Comparing result: Expected 'auto', Got '{result}'")
         assert result == "auto"
-    
+
     # === Edge cases ===
-    
+
     def test_handles_empty_string(self):
         """
         What it does: "" → ""
@@ -287,10 +301,10 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing empty string...")
         result = normalize_model_name("")
-        
+
         print(f"Comparing result: Expected '', Got '{result}'")
         assert result == ""
-    
+
     def test_handles_unknown_format(self):
         """
         What it does: gpt-4 → gpt-4 (passthrough)
@@ -298,10 +312,10 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'gpt-4'...")
         result = normalize_model_name("gpt-4")
-        
+
         print(f"Comparing result: Expected 'gpt-4', Got '{result}'")
         assert result == "gpt-4"
-    
+
     def test_handles_random_model_name(self):
         """
         What it does: some-random-model → some-random-model
@@ -309,7 +323,7 @@ class TestNormalizeModelName:
         """
         print("Action: Normalizing 'some-random-model'...")
         result = normalize_model_name("some-random-model")
-        
+
         print(f"Comparing result: Expected 'some-random-model', Got '{result}'")
         assert result == "some-random-model"
 
@@ -318,39 +332,43 @@ class TestNormalizeModelName:
 # TestNormalizeModelNameParametrized - Parametrized tests
 # =============================================================================
 
+
 class TestNormalizeModelNameParametrized:
     """Parametrized tests for complete coverage of scenarios."""
-    
-    @pytest.mark.parametrize("input_model,expected", [
-        # Standard format with minor version
-        ("claude-haiku-4-5", "claude-haiku-4.5"),
-        ("claude-haiku-4-5-20251001", "claude-haiku-4.5"),
-        ("claude-haiku-4-5-latest", "claude-haiku-4.5"),
-        ("claude-sonnet-4-5", "claude-sonnet-4.5"),
-        ("claude-sonnet-4-5-20250929", "claude-sonnet-4.5"),
-        ("claude-opus-4-5", "claude-opus-4.5"),
-        ("claude-opus-4-5-20251101", "claude-opus-4.5"),
-        # Without minor version
-        ("claude-sonnet-4", "claude-sonnet-4"),
-        ("claude-sonnet-4-20250514", "claude-sonnet-4"),
-        ("claude-haiku-4", "claude-haiku-4"),
-        ("claude-opus-4", "claude-opus-4"),
-        # Legacy format
-        ("claude-3-7-sonnet", "claude-3.7-sonnet"),
-        ("claude-3-7-sonnet-20250219", "claude-3.7-sonnet"),
-        ("claude-3-5-haiku", "claude-3.5-haiku"),
-        ("claude-3-0-opus", "claude-3.0-opus"),
-        # Already normalized
-        ("claude-haiku-4.5", "claude-haiku-4.5"),
-        ("claude-sonnet-4.5", "claude-sonnet-4.5"),
-        ("claude-opus-4.5", "claude-opus-4.5"),
-        ("claude-3.7-sonnet", "claude-3.7-sonnet"),
-        ("auto", "auto"),
-        # Passthrough for unknown
-        ("gpt-4", "gpt-4"),
-        ("gpt-4-turbo", "gpt-4-turbo"),
-        ("unknown-model", "unknown-model"),
-    ])
+
+    @pytest.mark.parametrize(
+        "input_model,expected",
+        [
+            # Standard format with minor version
+            ("claude-haiku-4-5", "claude-haiku-4.5"),
+            ("claude-haiku-4-5-20251001", "claude-haiku-4.5"),
+            ("claude-haiku-4-5-latest", "claude-haiku-4.5"),
+            ("claude-sonnet-4-5", "claude-sonnet-4.5"),
+            ("claude-sonnet-4-5-20250929", "claude-sonnet-4.5"),
+            ("claude-opus-4-5", "claude-opus-4.5"),
+            ("claude-opus-4-5-20251101", "claude-opus-4.5"),
+            # Without minor version
+            ("claude-sonnet-4", "claude-sonnet-4"),
+            ("claude-sonnet-4-20250514", "claude-sonnet-4"),
+            ("claude-haiku-4", "claude-haiku-4"),
+            ("claude-opus-4", "claude-opus-4"),
+            # Legacy format
+            ("claude-3-7-sonnet", "claude-3.7-sonnet"),
+            ("claude-3-7-sonnet-20250219", "claude-3.7-sonnet"),
+            ("claude-3-5-haiku", "claude-3.5-haiku"),
+            ("claude-3-0-opus", "claude-3.0-opus"),
+            # Already normalized
+            ("claude-haiku-4.5", "claude-haiku-4.5"),
+            ("claude-sonnet-4.5", "claude-sonnet-4.5"),
+            ("claude-opus-4.5", "claude-opus-4.5"),
+            ("claude-3.7-sonnet", "claude-3.7-sonnet"),
+            ("auto", "auto"),
+            # Passthrough for unknown
+            ("gpt-4", "gpt-4"),
+            ("gpt-4-turbo", "gpt-4-turbo"),
+            ("unknown-model", "unknown-model"),
+        ],
+    )
     def test_normalize_model_name_all_scenarios(self, input_model, expected):
         """
         What it does: Checks all normalization scenarios.
@@ -358,7 +376,7 @@ class TestNormalizeModelNameParametrized:
         """
         print(f"Action: Normalizing '{input_model}'...")
         result = normalize_model_name(input_model)
-        
+
         print(f"Comparing result: Expected '{expected}', Got '{result}'")
         assert result == expected
 
@@ -367,13 +385,14 @@ class TestNormalizeModelNameParametrized:
 # TestExtractModelFamily - Tests for model family extraction
 # =============================================================================
 
+
 class TestExtractModelFamily:
     """
     Tests for extract_model_family() function.
-    
+
     Checks extraction of model family (haiku, sonnet, opus) from name.
     """
-    
+
     def test_extracts_haiku_from_standard_format(self):
         """
         What it does: claude-haiku-4.5 → haiku
@@ -381,10 +400,10 @@ class TestExtractModelFamily:
         """
         print("Action: Extracting family from 'claude-haiku-4.5'...")
         result = extract_model_family("claude-haiku-4.5")
-        
+
         print(f"Comparing result: Expected 'haiku', Got '{result}'")
         assert result == "haiku"
-    
+
     def test_extracts_sonnet_from_standard_format(self):
         """
         What it does: claude-sonnet-4.5 → sonnet
@@ -392,10 +411,10 @@ class TestExtractModelFamily:
         """
         print("Action: Extracting family from 'claude-sonnet-4.5'...")
         result = extract_model_family("claude-sonnet-4.5")
-        
+
         print(f"Comparing result: Expected 'sonnet', Got '{result}'")
         assert result == "sonnet"
-    
+
     def test_extracts_opus_from_standard_format(self):
         """
         What it does: claude-opus-4.5 → opus
@@ -403,10 +422,10 @@ class TestExtractModelFamily:
         """
         print("Action: Extracting family from 'claude-opus-4.5'...")
         result = extract_model_family("claude-opus-4.5")
-        
+
         print(f"Comparing result: Expected 'opus', Got '{result}'")
         assert result == "opus"
-    
+
     def test_extracts_sonnet_from_legacy_format(self):
         """
         What it does: claude-3.7-sonnet → sonnet
@@ -414,10 +433,10 @@ class TestExtractModelFamily:
         """
         print("Action: Extracting family from 'claude-3.7-sonnet'...")
         result = extract_model_family("claude-3.7-sonnet")
-        
+
         print(f"Comparing result: Expected 'sonnet', Got '{result}'")
         assert result == "sonnet"
-    
+
     def test_extracts_haiku_from_unnormalized(self):
         """
         What it does: claude-haiku-4-5-20251001 → haiku
@@ -425,10 +444,10 @@ class TestExtractModelFamily:
         """
         print("Action: Extracting family from 'claude-haiku-4-5-20251001'...")
         result = extract_model_family("claude-haiku-4-5-20251001")
-        
+
         print(f"Comparing result: Expected 'haiku', Got '{result}'")
         assert result == "haiku"
-    
+
     def test_returns_none_for_non_claude(self):
         """
         What it does: gpt-4 → None
@@ -436,10 +455,10 @@ class TestExtractModelFamily:
         """
         print("Action: Extracting family from 'gpt-4'...")
         result = extract_model_family("gpt-4")
-        
+
         print(f"Comparing result: Expected None, Got {result}")
         assert result is None
-    
+
     def test_returns_none_for_auto(self):
         """
         What it does: auto → None
@@ -447,10 +466,10 @@ class TestExtractModelFamily:
         """
         print("Action: Extracting family from 'auto'...")
         result = extract_model_family("auto")
-        
+
         print(f"Comparing result: Expected None, Got {result}")
         assert result is None
-    
+
     def test_case_insensitive(self):
         """
         What it does: CLAUDE-HAIKU-4.5 → haiku
@@ -458,7 +477,7 @@ class TestExtractModelFamily:
         """
         print("Action: Extracting family from 'CLAUDE-HAIKU-4.5'...")
         result = extract_model_family("CLAUDE-HAIKU-4.5")
-        
+
         print(f"Comparing result: Expected 'haiku', Got '{result}'")
         assert result == "haiku"
 
@@ -467,13 +486,14 @@ class TestExtractModelFamily:
 # TestGetModelIdForKiro - Tests for converter helper
 # =============================================================================
 
+
 class TestGetModelIdForKiro:
     """
     Tests for get_model_id_for_kiro() function.
-    
+
     Checks getting model ID for sending to Kiro API.
     """
-    
+
     def test_normalizes_without_hidden_models(self):
         """
         What it does: Normalizes model without hidden models.
@@ -481,49 +501,55 @@ class TestGetModelIdForKiro:
         """
         print("Action: get_model_id_for_kiro('claude-haiku-4-5-20251001', {})...")
         result = get_model_id_for_kiro("claude-haiku-4-5-20251001", {})
-        
+
         print(f"Comparing result: Expected 'claude-haiku-4.5', Got '{result}'")
         assert result == "claude-haiku-4.5"
-    
+
     def test_returns_internal_id_for_hidden_model(self):
         """
         What it does: Returns internal ID for hidden model.
         Goal: Check hidden model resolution.
         """
         hidden = {"claude-3.7-sonnet": "CLAUDE_3_7_SONNET_20250219_V1_0"}
-        
+
         print("Action: get_model_id_for_kiro('claude-3.7-sonnet', hidden)...")
         result = get_model_id_for_kiro("claude-3.7-sonnet", hidden)
-        
-        print(f"Comparing result: Expected 'CLAUDE_3_7_SONNET_20250219_V1_0', Got '{result}'")
+
+        print(
+            f"Comparing result: Expected 'CLAUDE_3_7_SONNET_20250219_V1_0', Got '{result}'"
+        )
         assert result == "CLAUDE_3_7_SONNET_20250219_V1_0"
-    
+
     def test_normalizes_then_checks_hidden(self):
         """
         What it does: Normalizes first, then checks hidden.
         Goal: Check operation order.
         """
         hidden = {"claude-3.7-sonnet": "CLAUDE_3_7_SONNET_20250219_V1_0"}
-        
+
         print("Action: get_model_id_for_kiro('claude-3-7-sonnet', hidden)...")
         result = get_model_id_for_kiro("claude-3-7-sonnet", hidden)
-        
-        print(f"Comparing result: Expected 'CLAUDE_3_7_SONNET_20250219_V1_0', Got '{result}'")
+
+        print(
+            f"Comparing result: Expected 'CLAUDE_3_7_SONNET_20250219_V1_0', Got '{result}'"
+        )
         assert result == "CLAUDE_3_7_SONNET_20250219_V1_0"
-    
+
     def test_normalizes_with_date_then_checks_hidden(self):
         """
         What it does: Normalizes with date suffix, then checks hidden.
         Goal: Check full normalization chain.
         """
         hidden = {"claude-3.7-sonnet": "CLAUDE_3_7_SONNET_20250219_V1_0"}
-        
+
         print("Action: get_model_id_for_kiro('claude-3-7-sonnet-20250219', hidden)...")
         result = get_model_id_for_kiro("claude-3-7-sonnet-20250219", hidden)
-        
-        print(f"Comparing result: Expected 'CLAUDE_3_7_SONNET_20250219_V1_0', Got '{result}'")
+
+        print(
+            f"Comparing result: Expected 'CLAUDE_3_7_SONNET_20250219_V1_0', Got '{result}'"
+        )
         assert result == "CLAUDE_3_7_SONNET_20250219_V1_0"
-    
+
     def test_passthrough_unknown_model(self):
         """
         What it does: Passthrough for unknown models.
@@ -531,7 +557,7 @@ class TestGetModelIdForKiro:
         """
         print("Action: get_model_id_for_kiro('claude-unknown-model', {})...")
         result = get_model_id_for_kiro("claude-unknown-model", {})
-        
+
         print(f"Comparing result: Expected 'claude-unknown-model', Got '{result}'")
         assert result == "claude-unknown-model"
 
@@ -540,9 +566,10 @@ class TestGetModelIdForKiro:
 # TestModelResolver - Tests for ModelResolver class
 # =============================================================================
 
+
 class TestModelResolverInitialization:
     """Tests for ModelResolver initialization."""
-    
+
     def test_init_with_cache_and_hidden_models(self, mock_model_cache, hidden_models):
         """
         What it does: Creates ModelResolver with cache and hidden models.
@@ -550,11 +577,11 @@ class TestModelResolverInitialization:
         """
         print("Action: Creating ModelResolver...")
         resolver = ModelResolver(cache=mock_model_cache, hidden_models=hidden_models)
-        
+
         print("Check: Attributes set correctly...")
         assert resolver.cache is mock_model_cache
         assert resolver.hidden_models == hidden_models
-    
+
     def test_init_with_empty_hidden_models(self, mock_model_cache):
         """
         What it does: Creates ModelResolver without hidden models.
@@ -562,10 +589,10 @@ class TestModelResolverInitialization:
         """
         print("Action: Creating ModelResolver without hidden models...")
         resolver = ModelResolver(cache=mock_model_cache, hidden_models={})
-        
+
         print("Check: hidden_models is empty...")
         assert resolver.hidden_models == {}
-    
+
     def test_init_with_none_hidden_models(self, mock_model_cache):
         """
         What it does: Creates ModelResolver with hidden_models=None.
@@ -573,14 +600,14 @@ class TestModelResolverInitialization:
         """
         print("Action: Creating ModelResolver with hidden_models=None...")
         resolver = ModelResolver(cache=mock_model_cache, hidden_models=None)
-        
+
         print("Check: hidden_models initialized as empty dict...")
         assert resolver.hidden_models == {}
 
 
 class TestModelResolverResolve:
     """Tests for resolve() method of ModelResolver class."""
-    
+
     def test_resolve_finds_model_in_cache(self, model_resolver):
         """
         What it does: Finds model in cache.
@@ -588,23 +615,29 @@ class TestModelResolverResolve:
         """
         print("Action: Resolving 'claude-haiku-4-5'...")
         result = model_resolver.resolve("claude-haiku-4-5")
-        
+
         print(f"Check result: {result}")
-        print(f"Comparing internal_id: Expected 'claude-haiku-4.5', Got '{result.internal_id}'")
+        print(
+            f"Comparing internal_id: Expected 'claude-haiku-4.5', Got '{result.internal_id}'"
+        )
         assert result.internal_id == "claude-haiku-4.5"
-        
+
         print(f"Comparing source: Expected 'cache', Got '{result.source}'")
         assert result.source == "cache"
-        
+
         print(f"Comparing is_verified: Expected True, Got {result.is_verified}")
         assert result.is_verified is True
-        
-        print(f"Comparing normalized: Expected 'claude-haiku-4.5', Got '{result.normalized}'")
+
+        print(
+            f"Comparing normalized: Expected 'claude-haiku-4.5', Got '{result.normalized}'"
+        )
         assert result.normalized == "claude-haiku-4.5"
-        
-        print(f"Comparing original_request: Expected 'claude-haiku-4-5', Got '{result.original_request}'")
+
+        print(
+            f"Comparing original_request: Expected 'claude-haiku-4-5', Got '{result.original_request}'"
+        )
         assert result.original_request == "claude-haiku-4-5"
-    
+
     def test_resolve_finds_model_in_hidden(self, model_resolver):
         """
         What it does: Finds model in hidden models.
@@ -612,17 +645,19 @@ class TestModelResolverResolve:
         """
         print("Action: Resolving 'claude-3-7-sonnet'...")
         result = model_resolver.resolve("claude-3-7-sonnet")
-        
+
         print(f"Check result: {result}")
-        print(f"Comparing internal_id: Expected 'CLAUDE_3_7_SONNET_20250219_V1_0', Got '{result.internal_id}'")
+        print(
+            f"Comparing internal_id: Expected 'CLAUDE_3_7_SONNET_20250219_V1_0', Got '{result.internal_id}'"
+        )
         assert result.internal_id == "CLAUDE_3_7_SONNET_20250219_V1_0"
-        
+
         print(f"Comparing source: Expected 'hidden', Got '{result.source}'")
         assert result.source == "hidden"
-        
+
         print(f"Comparing is_verified: Expected True, Got {result.is_verified}")
         assert result.is_verified is True
-    
+
     def test_resolve_passthrough_for_unknown(self, model_resolver):
         """
         What it does: Passthrough for unknown model.
@@ -630,17 +665,19 @@ class TestModelResolverResolve:
         """
         print("Action: Resolving 'claude-haiku-4-6' (does not exist)...")
         result = model_resolver.resolve("claude-haiku-4-6")
-        
+
         print(f"Check result: {result}")
-        print(f"Comparing internal_id: Expected 'claude-haiku-4.6', Got '{result.internal_id}'")
+        print(
+            f"Comparing internal_id: Expected 'claude-haiku-4.6', Got '{result.internal_id}'"
+        )
         assert result.internal_id == "claude-haiku-4.6"
-        
+
         print(f"Comparing source: Expected 'passthrough', Got '{result.source}'")
         assert result.source == "passthrough"
-        
+
         print(f"Comparing is_verified: Expected False, Got {result.is_verified}")
         assert result.is_verified is False
-    
+
     def test_resolve_normalizes_before_lookup(self, model_resolver):
         """
         What it does: Normalizes name before cache lookup.
@@ -648,35 +685,37 @@ class TestModelResolverResolve:
         """
         print("Action: Resolving 'claude-haiku-4-5-20251001'...")
         result = model_resolver.resolve("claude-haiku-4-5-20251001")
-        
-        print(f"Comparing normalized: Expected 'claude-haiku-4.5', Got '{result.normalized}'")
+
+        print(
+            f"Comparing normalized: Expected 'claude-haiku-4.5', Got '{result.normalized}'"
+        )
         assert result.normalized == "claude-haiku-4.5"
-        
+
         print(f"Comparing source: Expected 'cache', Got '{result.source}'")
         assert result.source == "cache"
-    
+
     def test_resolve_never_raises(self, model_resolver):
         """
         What it does: Never raises exception.
         Goal: Check that resolve() always returns ModelResolution.
         """
         print("Action: Resolving strange input data...")
-        
+
         # Empty string
         result1 = model_resolver.resolve("")
         print(f"Empty string: {result1}")
         assert isinstance(result1, ModelResolution)
-        
+
         # Special characters
         result2 = model_resolver.resolve("!@#$%^&*()")
         print(f"Special characters: {result2}")
         assert isinstance(result2, ModelResolution)
-        
+
         # Very long name
         result3 = model_resolver.resolve("a" * 1000)
         print(f"Long name: source={result3.source}")
         assert isinstance(result3, ModelResolution)
-    
+
     def test_resolve_auto_model(self, model_resolver):
         """
         What it does: Resolves 'auto' model.
@@ -684,13 +723,13 @@ class TestModelResolverResolve:
         """
         print("Action: Resolving 'auto'...")
         result = model_resolver.resolve("auto")
-        
+
         print(f"Comparing internal_id: Expected 'auto', Got '{result.internal_id}'")
         assert result.internal_id == "auto"
-        
+
         print(f"Comparing source: Expected 'cache', Got '{result.source}'")
         assert result.source == "cache"
-    
+
     def test_resolve_with_empty_cache(self, empty_model_cache, hidden_models):
         """
         What it does: Resolves model with empty cache.
@@ -698,23 +737,23 @@ class TestModelResolverResolve:
         """
         print("Setup: Creating resolver with empty cache...")
         resolver = ModelResolver(cache=empty_model_cache, hidden_models=hidden_models)
-        
+
         print("Action: Resolving 'claude-3.7-sonnet'...")
         result = resolver.resolve("claude-3.7-sonnet")
-        
+
         print(f"Comparing source: Expected 'hidden', Got '{result.source}'")
         assert result.source == "hidden"
-        
+
         print("Action: Resolving 'claude-haiku-4.5' (not in cache)...")
         result2 = resolver.resolve("claude-haiku-4.5")
-        
+
         print(f"Comparing source: Expected 'passthrough', Got '{result2.source}'")
         assert result2.source == "passthrough"
 
 
 class TestModelResolverGetAvailableModels:
     """Tests for get_available_models() method."""
-    
+
     def test_get_available_models_combines_cache_and_hidden(self, model_resolver):
         """
         What it does: Returns models from cache and hidden.
@@ -722,20 +761,20 @@ class TestModelResolverGetAvailableModels:
         """
         print("Action: Getting list of available models...")
         models = model_resolver.get_available_models()
-        
+
         print(f"Received models: {models}")
-        
+
         # Check cache models
         print("Check: Cache models present...")
         assert "claude-haiku-4.5" in models
         assert "claude-sonnet-4.5" in models
         assert "claude-opus-4.5" in models
         assert "auto" in models
-        
+
         # Check hidden models
         print("Check: Hidden models present...")
         assert "claude-3.7-sonnet" in models
-    
+
     def test_get_available_models_returns_sorted_list(self, model_resolver):
         """
         What it does: Returns sorted list.
@@ -743,12 +782,12 @@ class TestModelResolverGetAvailableModels:
         """
         print("Action: Getting list of available models...")
         models = model_resolver.get_available_models()
-        
+
         print(f"Received models: {models}")
         print(f"Sorted: {sorted(models)}")
-        
+
         assert models == sorted(models)
-    
+
     def test_get_available_models_no_duplicates(self, mock_model_cache):
         """
         What it does: Does not return duplicates.
@@ -757,19 +796,19 @@ class TestModelResolverGetAvailableModels:
         # Add hidden model that already exists in cache
         hidden = {"claude-haiku-4.5": "SOME_INTERNAL_ID"}
         resolver = ModelResolver(cache=mock_model_cache, hidden_models=hidden)
-        
+
         print("Action: Getting list with potential duplicate...")
         models = resolver.get_available_models()
-        
+
         print(f"Received models: {models}")
-        
+
         # Check uniqueness
         assert len(models) == len(set(models))
 
 
 class TestModelResolverGetModelsByFamily:
     """Tests for get_models_by_family() method."""
-    
+
     def test_get_models_by_family_haiku(self, model_resolver):
         """
         What it does: Returns only Haiku models.
@@ -777,13 +816,13 @@ class TestModelResolverGetModelsByFamily:
         """
         print("Action: Getting Haiku models...")
         models = model_resolver.get_models_by_family("haiku")
-        
+
         print(f"Received models: {models}")
-        
+
         assert "claude-haiku-4.5" in models
         assert "claude-sonnet-4.5" not in models
         assert "claude-opus-4.5" not in models
-    
+
     def test_get_models_by_family_sonnet(self, model_resolver):
         """
         What it does: Returns only Sonnet models.
@@ -791,14 +830,14 @@ class TestModelResolverGetModelsByFamily:
         """
         print("Action: Getting Sonnet models...")
         models = model_resolver.get_models_by_family("sonnet")
-        
+
         print(f"Received models: {models}")
-        
+
         assert "claude-sonnet-4.5" in models
         assert "claude-sonnet-4" in models
         assert "claude-3.7-sonnet" in models  # Hidden model
         assert "claude-haiku-4.5" not in models
-    
+
     def test_get_models_by_family_opus(self, model_resolver):
         """
         What it does: Returns only Opus models.
@@ -806,12 +845,12 @@ class TestModelResolverGetModelsByFamily:
         """
         print("Action: Getting Opus models...")
         models = model_resolver.get_models_by_family("opus")
-        
+
         print(f"Received models: {models}")
-        
+
         assert "claude-opus-4.5" in models
         assert "claude-sonnet-4.5" not in models
-    
+
     def test_get_models_by_family_case_insensitive(self, model_resolver):
         """
         What it does: Filtering is case insensitive.
@@ -819,15 +858,15 @@ class TestModelResolverGetModelsByFamily:
         """
         print("Action: Getting HAIKU models (uppercase)...")
         models = model_resolver.get_models_by_family("HAIKU")
-        
+
         print(f"Received models: {models}")
-        
+
         assert "claude-haiku-4.5" in models
 
 
 class TestModelResolverGetSuggestionsForModel:
     """Tests for get_suggestions_for_model() method."""
-    
+
     def test_get_suggestions_returns_same_family(self, model_resolver):
         """
         What it does: Returns models of same family.
@@ -835,14 +874,14 @@ class TestModelResolverGetSuggestionsForModel:
         """
         print("Action: Getting suggestions for 'claude-haiku-4-6'...")
         suggestions = model_resolver.get_suggestions_for_model("claude-haiku-4-6")
-        
+
         print(f"Received suggestions: {suggestions}")
-        
+
         # All suggestions should be Haiku
         for s in suggestions:
             print(f"Check: '{s}' contains 'haiku'...")
             assert "haiku" in s.lower()
-    
+
     def test_get_suggestions_no_cross_family(self, model_resolver):
         """
         What it does: NEVER suggests models from other family.
@@ -850,15 +889,15 @@ class TestModelResolverGetSuggestionsForModel:
         """
         print("Action: Getting suggestions for 'claude-opus-5'...")
         suggestions = model_resolver.get_suggestions_for_model("claude-opus-5")
-        
+
         print(f"Received suggestions: {suggestions}")
-        
+
         # Should NOT be Sonnet or Haiku
         for s in suggestions:
             print(f"Check: '{s}' does NOT contain 'sonnet' or 'haiku'...")
             assert "sonnet" not in s.lower()
             assert "haiku" not in s.lower()
-    
+
     def test_get_suggestions_returns_all_for_unknown_family(self, model_resolver):
         """
         What it does: Returns all models for unknown family.
@@ -866,9 +905,9 @@ class TestModelResolverGetSuggestionsForModel:
         """
         print("Action: Getting suggestions for 'gpt-4'...")
         suggestions = model_resolver.get_suggestions_for_model("gpt-4")
-        
+
         print(f"Received suggestions: {suggestions}")
-        
+
         # Should be all models
         all_models = model_resolver.get_available_models()
         assert set(suggestions) == set(all_models)
@@ -878,9 +917,10 @@ class TestModelResolverGetSuggestionsForModel:
 # TestModelResolution - Tests for ModelResolution dataclass
 # =============================================================================
 
+
 class TestModelResolution:
     """Tests for ModelResolution dataclass."""
-    
+
     def test_model_resolution_fields(self):
         """
         What it does: Checks all ModelResolution fields.
@@ -892,16 +932,16 @@ class TestModelResolution:
             source="cache",
             original_request="claude-haiku-4-5",
             normalized="claude-haiku-4.5",
-            is_verified=True
+            is_verified=True,
         )
-        
+
         print(f"Check fields: {resolution}")
         assert resolution.internal_id == "claude-haiku-4.5"
         assert resolution.source == "cache"
         assert resolution.original_request == "claude-haiku-4-5"
         assert resolution.normalized == "claude-haiku-4.5"
         assert resolution.is_verified is True
-    
+
     def test_model_resolution_is_frozen(self):
         """
         What it does: Checks that ModelResolution is immutable.
@@ -913,13 +953,13 @@ class TestModelResolution:
             source="cache",
             original_request="test",
             normalized="test",
-            is_verified=True
+            is_verified=True,
         )
-        
+
         print("Check: Attempt to modify field should raise error...")
         with pytest.raises(FrozenInstanceError):
             resolution.internal_id = "changed"
-    
+
     def test_model_resolution_equality(self):
         """
         What it does: Checks comparison of two ModelResolution objects.
@@ -931,19 +971,19 @@ class TestModelResolution:
             source="cache",
             original_request="test",
             normalized="test",
-            is_verified=True
+            is_verified=True,
         )
         resolution2 = ModelResolution(
             internal_id="test",
             source="cache",
             original_request="test",
             normalized="test",
-            is_verified=True
+            is_verified=True,
         )
-        
+
         print(f"Comparing: {resolution1} == {resolution2}")
         assert resolution1 == resolution2
-    
+
     def test_model_resolution_inequality(self):
         """
         What it does: Checks inequality of different ModelResolution objects.
@@ -955,16 +995,16 @@ class TestModelResolution:
             source="cache",
             original_request="test",
             normalized="test",
-            is_verified=True
+            is_verified=True,
         )
         resolution2 = ModelResolution(
             internal_id="test2",
             source="hidden",
             original_request="test",
             normalized="test",
-            is_verified=True
+            is_verified=True,
         )
-        
+
         print(f"Comparing: {resolution1} != {resolution2}")
         assert resolution1 != resolution2
 
@@ -973,9 +1013,10 @@ class TestModelResolution:
 # TestModelInfoCacheNewMethods - Tests for new cache methods
 # =============================================================================
 
+
 class TestModelInfoCacheIsValidModel:
     """Tests for is_valid_model() method in ModelInfoCache."""
-    
+
     @pytest.mark.asyncio
     async def test_is_valid_model_returns_true_for_cached(self):
         """
@@ -985,13 +1026,13 @@ class TestModelInfoCacheIsValidModel:
         print("Setup: Creating and populating cache...")
         cache = ModelInfoCache()
         await cache.update([{"modelId": "claude-sonnet-4.5"}])
-        
+
         print("Action: Checking is_valid_model('claude-sonnet-4.5')...")
         result = cache.is_valid_model("claude-sonnet-4.5")
-        
+
         print(f"Comparing result: Expected True, Got {result}")
         assert result is True
-    
+
     @pytest.mark.asyncio
     async def test_is_valid_model_returns_false_for_unknown(self):
         """
@@ -1001,13 +1042,13 @@ class TestModelInfoCacheIsValidModel:
         print("Setup: Creating and populating cache...")
         cache = ModelInfoCache()
         await cache.update([{"modelId": "claude-sonnet-4.5"}])
-        
+
         print("Action: Checking is_valid_model('unknown-model')...")
         result = cache.is_valid_model("unknown-model")
-        
+
         print(f"Comparing result: Expected False, Got {result}")
         assert result is False
-    
+
     def test_is_valid_model_on_empty_cache(self):
         """
         What it does: Returns False for empty cache.
@@ -1015,17 +1056,17 @@ class TestModelInfoCacheIsValidModel:
         """
         print("Setup: Creating empty cache...")
         cache = ModelInfoCache()
-        
+
         print("Action: Checking is_valid_model('any-model')...")
         result = cache.is_valid_model("any-model")
-        
+
         print(f"Comparing result: Expected False, Got {result}")
         assert result is False
 
 
 class TestModelInfoCacheAddHiddenModel:
     """Tests for add_hidden_model() method in ModelInfoCache."""
-    
+
     def test_add_hidden_model_adds_to_cache(self):
         """
         What it does: Adds hidden model to cache.
@@ -1033,13 +1074,13 @@ class TestModelInfoCacheAddHiddenModel:
         """
         print("Setup: Creating empty cache...")
         cache = ModelInfoCache()
-        
+
         print("Action: Adding hidden model...")
         cache.add_hidden_model("claude-3.7-sonnet", "CLAUDE_3_7_SONNET_20250219_V1_0")
-        
+
         print("Check: Model added to cache...")
         assert cache.is_valid_model("claude-3.7-sonnet") is True
-    
+
     def test_add_hidden_model_stores_internal_id(self):
         """
         What it does: Stores internal ID in _internal_id field.
@@ -1047,17 +1088,17 @@ class TestModelInfoCacheAddHiddenModel:
         """
         print("Setup: Creating empty cache...")
         cache = ModelInfoCache()
-        
+
         print("Action: Adding hidden model...")
         cache.add_hidden_model("claude-3.7-sonnet", "CLAUDE_3_7_SONNET_20250219_V1_0")
-        
+
         print("Check: _internal_id saved...")
         model_info = cache.get("claude-3.7-sonnet")
         print(f"model_info: {model_info}")
-        
+
         assert model_info["_internal_id"] == "CLAUDE_3_7_SONNET_20250219_V1_0"
         assert model_info["_is_hidden"] is True
-    
+
     def test_add_hidden_model_sets_model_id(self):
         """
         What it does: Sets modelId equal to display_name.
@@ -1065,16 +1106,16 @@ class TestModelInfoCacheAddHiddenModel:
         """
         print("Setup: Creating empty cache...")
         cache = ModelInfoCache()
-        
+
         print("Action: Adding hidden model...")
         cache.add_hidden_model("claude-3.7-sonnet", "INTERNAL_ID")
-        
+
         print("Check: modelId set...")
         model_info = cache.get("claude-3.7-sonnet")
-        
+
         assert model_info["modelId"] == "claude-3.7-sonnet"
         assert model_info["modelName"] == "claude-3.7-sonnet"
-    
+
     @pytest.mark.asyncio
     async def test_add_hidden_model_does_not_overwrite_existing(self):
         """
@@ -1083,21 +1124,25 @@ class TestModelInfoCacheAddHiddenModel:
         """
         print("Setup: Creating cache with model...")
         cache = ModelInfoCache()
-        await cache.update([{
-            "modelId": "claude-3.7-sonnet",
-            "modelName": "Original Name",
-            "tokenLimits": {"maxInputTokens": 200000}
-        }])
-        
+        await cache.update(
+            [
+                {
+                    "modelId": "claude-3.7-sonnet",
+                    "modelName": "Original Name",
+                    "tokenLimits": {"maxInputTokens": 200000},
+                }
+            ]
+        )
+
         print("Action: Attempting to add hidden model with same ID...")
         cache.add_hidden_model("claude-3.7-sonnet", "NEW_INTERNAL_ID")
-        
+
         print("Check: Original data preserved...")
         model_info = cache.get("claude-3.7-sonnet")
-        
+
         assert model_info["modelName"] == "Original Name"
         assert "_internal_id" not in model_info  # Should not be added
-    
+
     def test_add_hidden_model_appears_in_get_all_model_ids(self):
         """
         What it does: Hidden model appears in list of all models.
@@ -1105,13 +1150,13 @@ class TestModelInfoCacheAddHiddenModel:
         """
         print("Setup: Creating empty cache...")
         cache = ModelInfoCache()
-        
+
         print("Action: Adding hidden model...")
         cache.add_hidden_model("claude-3.7-sonnet", "INTERNAL_ID")
-        
+
         print("Check: Model in list...")
         model_ids = cache.get_all_model_ids()
-        
+
         assert "claude-3.7-sonnet" in model_ids
 
 
@@ -1119,13 +1164,14 @@ class TestModelInfoCacheAddHiddenModel:
 # TestCriticalSafetyPrinciple - Critical security tests
 # =============================================================================
 
+
 class TestCriticalSafetyPrinciple:
     """
     Critical security tests: Family Isolation.
-    
+
     IMPORTANT: Resolver MUST NEVER cross model family boundaries!
     """
-    
+
     def test_opus_never_becomes_sonnet(self, model_resolver):
         """
         What it does: Opus request NEVER becomes Sonnet.
@@ -1133,16 +1179,16 @@ class TestCriticalSafetyPrinciple:
         """
         print("Action: Resolving non-existent Opus model...")
         result = model_resolver.resolve("claude-opus-5")
-        
+
         print(f"Result: {result}")
-        
+
         # Should be passthrough, NOT fallback to Sonnet
         print("Check: Does NOT contain 'sonnet'...")
         assert "sonnet" not in result.internal_id.lower()
-        
+
         print("Check: Does NOT contain 'haiku'...")
         assert "haiku" not in result.internal_id.lower()
-    
+
     def test_haiku_never_becomes_opus(self, model_resolver):
         """
         What it does: Haiku request NEVER becomes Opus.
@@ -1150,16 +1196,16 @@ class TestCriticalSafetyPrinciple:
         """
         print("Action: Resolving non-existent Haiku model...")
         result = model_resolver.resolve("claude-haiku-5")
-        
+
         print(f"Result: {result}")
-        
+
         # Should be passthrough, NOT fallback to Opus
         print("Check: Does NOT contain 'opus'...")
         assert "opus" not in result.internal_id.lower()
-        
+
         print("Check: Does NOT contain 'sonnet'...")
         assert "sonnet" not in result.internal_id.lower()
-    
+
     def test_sonnet_never_becomes_haiku(self, model_resolver):
         """
         What it does: Sonnet request NEVER becomes Haiku.
@@ -1167,29 +1213,32 @@ class TestCriticalSafetyPrinciple:
         """
         print("Action: Resolving non-existent Sonnet model...")
         result = model_resolver.resolve("claude-sonnet-5")
-        
+
         print(f"Result: {result}")
-        
+
         # Should be passthrough, NOT fallback to Haiku
         print("Check: Does NOT contain 'haiku'...")
         assert "haiku" not in result.internal_id.lower()
-        
+
         print("Check: Does NOT contain 'opus'...")
         assert "opus" not in result.internal_id.lower()
-    
+
     def test_suggestions_respect_family_boundaries(self, model_resolver):
         """
         What it does: Suggestions only from same family.
         Goal: Check that get_suggestions_for_model() respects boundaries.
         """
         families = ["haiku", "sonnet", "opus"]
-        
+
         for family in families:
             print(f"Check family: {family}...")
-            suggestions = model_resolver.get_suggestions_for_model(f"claude-{family}-99")
-            
+            suggestions = model_resolver.get_suggestions_for_model(
+                f"claude-{family}-99"
+            )
+
             for suggestion in suggestions:
                 print(f"  Suggestion: {suggestion}")
                 # Each suggestion must contain same family
-                assert family in suggestion.lower(), \
+                assert family in suggestion.lower(), (
                     f"Suggestion '{suggestion}' not from family '{family}'!"
+                )

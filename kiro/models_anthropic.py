@@ -26,7 +26,6 @@ Anthropic's Messages API specification.
 Reference: https://docs.anthropic.com/en/api/messages
 """
 
-import time
 from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field
 
@@ -35,12 +34,14 @@ from pydantic import BaseModel, Field
 # Content Block Models
 # ==================================================================================================
 
+
 class TextContentBlock(BaseModel):
     """
     Text content block in Anthropic format.
-    
+
     Used in both requests and responses for text content.
     """
+
     type: Literal["text"] = "text"
     text: str
 
@@ -48,15 +49,16 @@ class TextContentBlock(BaseModel):
 class ThinkingContentBlock(BaseModel):
     """
     Thinking content block in Anthropic format.
-    
+
     Represents the model's reasoning/thinking process.
     Used when extended thinking is enabled.
-    
+
     Attributes:
         type: Always "thinking"
         thinking: The thinking/reasoning content
         signature: Cryptographic signature for verification (placeholder in our case)
     """
+
     type: Literal["thinking"] = "thinking"
     thinking: str
     signature: str = ""
@@ -65,9 +67,10 @@ class ThinkingContentBlock(BaseModel):
 class ToolUseContentBlock(BaseModel):
     """
     Tool use content block in Anthropic format.
-    
+
     Represents a tool call made by the assistant.
     """
+
     type: Literal["tool_use"] = "tool_use"
     id: str
     name: str
@@ -77,9 +80,10 @@ class ToolUseContentBlock(BaseModel):
 class ToolResultContentBlock(BaseModel):
     """
     Tool result content block in Anthropic format.
-    
+
     Represents the result of a tool call, sent by the user.
     """
+
     type: Literal["tool_result"] = "tool_result"
     tool_use_id: str
     content: Optional[Union[str, List["TextContentBlock"]]] = None
@@ -90,15 +94,17 @@ class ToolResultContentBlock(BaseModel):
 # Image Content Block Models
 # ==================================================================================================
 
+
 class Base64ImageSource(BaseModel):
     """
     Base64-encoded image source in Anthropic format.
-    
+
     Attributes:
         type: Always "base64"
         media_type: MIME type (e.g., "image/jpeg", "image/png", "image/gif", "image/webp")
         data: Base64-encoded image data
     """
+
     type: Literal["base64"] = "base64"
     media_type: str
     data: str
@@ -107,14 +113,15 @@ class Base64ImageSource(BaseModel):
 class URLImageSource(BaseModel):
     """
     URL-based image source in Anthropic format.
-    
+
     Note: URL images require fetching and converting to base64 for Kiro API.
     Currently logged as warning and skipped.
-    
+
     Attributes:
         type: Always "url"
         url: HTTP(S) URL to the image
     """
+
     type: Literal["url"] = "url"
     url: str
 
@@ -122,14 +129,15 @@ class URLImageSource(BaseModel):
 class ImageContentBlock(BaseModel):
     """
     Image content block in Anthropic format.
-    
+
     Represents an image in a message. Supports both base64-encoded
     images and URL references.
-    
+
     Attributes:
         type: Always "image"
         source: Image source (base64 or URL)
     """
+
     type: Literal["image"] = "image"
     source: Union[Base64ImageSource, URLImageSource]
 
@@ -148,17 +156,19 @@ ContentBlock = Union[
 # Message Models
 # ==================================================================================================
 
+
 class AnthropicMessage(BaseModel):
     """
     Message in Anthropic format.
-    
+
     Attributes:
         role: Message role (user or assistant)
         content: Message content (string or list of content blocks)
     """
+
     role: Literal["user", "assistant"]
     content: Union[str, List[ContentBlock]]
-    
+
     model_config = {"extra": "allow"}
 
 
@@ -166,15 +176,17 @@ class AnthropicMessage(BaseModel):
 # Tool Models
 # ==================================================================================================
 
+
 class AnthropicTool(BaseModel):
     """
     Tool definition in Anthropic format.
-    
+
     Attributes:
         name: Tool name (must match pattern ^[a-zA-Z0-9_-]{1,64}$)
         description: Tool description (optional but recommended)
         input_schema: JSON Schema for tool parameters
     """
+
     name: str
     description: Optional[str] = None
     input_schema: Dict[str, Any]
@@ -182,16 +194,19 @@ class AnthropicTool(BaseModel):
 
 class ToolChoiceAuto(BaseModel):
     """Auto tool choice - model decides whether to use tools."""
+
     type: Literal["auto"] = "auto"
 
 
 class ToolChoiceAny(BaseModel):
     """Any tool choice - model must use at least one tool."""
+
     type: Literal["any"] = "any"
 
 
 class ToolChoiceTool(BaseModel):
     """Specific tool choice - model must use the specified tool."""
+
     type: Literal["tool"] = "tool"
     name: str
 
@@ -203,17 +218,19 @@ ToolChoice = Union[ToolChoiceAuto, ToolChoiceAny, ToolChoiceTool]
 # Request Models
 # ==================================================================================================
 
+
 class SystemContentBlock(BaseModel):
     """
     System content block for prompt caching.
-    
+
     Anthropic API supports system as a list of content blocks
     with optional cache_control for prompt caching.
     """
+
     type: Literal["text"] = "text"
     text: str
     cache_control: Optional[Dict[str, Any]] = None
-    
+
     model_config = {"extra": "allow"}
 
 
@@ -224,7 +241,7 @@ SystemPrompt = Union[str, List[SystemContentBlock], List[Dict[str, Any]]]
 class AnthropicMessagesRequest(BaseModel):
     """
     Request to Anthropic Messages API (/v1/messages).
-    
+
     Attributes:
         model: Model ID (e.g., "claude-sonnet-4-5")
         messages: List of conversation messages
@@ -239,27 +256,28 @@ class AnthropicMessagesRequest(BaseModel):
         stop_sequences: Custom stop sequences
         metadata: Request metadata
     """
+
     model: str
     messages: List[AnthropicMessage] = Field(min_length=1)
     max_tokens: int
-    
+
     # Optional parameters - system can be string or list of content blocks
     system: Optional[SystemPrompt] = None
     stream: bool = False
-    
+
     # Tools
     tools: Optional[List[AnthropicTool]] = None
     tool_choice: Optional[Union[ToolChoice, Dict[str, Any]]] = None
-    
+
     # Sampling parameters
     temperature: Optional[float] = Field(default=None, ge=0, le=1)
     top_p: Optional[float] = Field(default=None, ge=0, le=1)
     top_k: Optional[int] = Field(default=None, ge=0)
-    
+
     # Other parameters
     stop_sequences: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
-    
+
     model_config = {"extra": "allow"}
 
 
@@ -267,14 +285,16 @@ class AnthropicMessagesRequest(BaseModel):
 # Response Models
 # ==================================================================================================
 
+
 class AnthropicUsage(BaseModel):
     """
     Token usage information in Anthropic format.
-    
+
     Attributes:
         input_tokens: Number of input tokens
         output_tokens: Number of output tokens
     """
+
     input_tokens: int
     output_tokens: int
 
@@ -282,7 +302,7 @@ class AnthropicUsage(BaseModel):
 class AnthropicMessagesResponse(BaseModel):
     """
     Response from Anthropic Messages API (non-streaming).
-    
+
     Attributes:
         id: Unique message ID
         type: Always "message"
@@ -293,12 +313,15 @@ class AnthropicMessagesResponse(BaseModel):
         stop_sequence: Stop sequence that triggered stop (if any)
         usage: Token usage information
     """
+
     id: str
     type: Literal["message"] = "message"
     role: Literal["assistant"] = "assistant"
     content: List[Union[ThinkingContentBlock, TextContentBlock, ToolUseContentBlock]]
     model: str
-    stop_reason: Optional[Literal["end_turn", "max_tokens", "stop_sequence", "tool_use"]] = None
+    stop_reason: Optional[
+        Literal["end_turn", "max_tokens", "stop_sequence", "tool_use"]
+    ] = None
     stop_sequence: Optional[str] = None
     usage: AnthropicUsage
 
@@ -307,12 +330,14 @@ class AnthropicMessagesResponse(BaseModel):
 # Streaming Event Models
 # ==================================================================================================
 
+
 class MessageStartEvent(BaseModel):
     """
     Event sent at the start of a message stream.
-    
+
     Contains the initial message object with empty content.
     """
+
     type: Literal["message_start"] = "message_start"
     message: Dict[str, Any]
 
@@ -320,11 +345,12 @@ class MessageStartEvent(BaseModel):
 class ContentBlockStartEvent(BaseModel):
     """
     Event sent at the start of a content block.
-    
+
     Attributes:
         index: Index of the content block
         content_block: Initial content block (with empty text for text blocks)
     """
+
     type: Literal["content_block_start"] = "content_block_start"
     index: int
     content_block: Dict[str, Any]
@@ -332,18 +358,21 @@ class ContentBlockStartEvent(BaseModel):
 
 class TextDelta(BaseModel):
     """Delta for text content."""
+
     type: Literal["text_delta"] = "text_delta"
     text: str
 
 
 class ThinkingDelta(BaseModel):
     """Delta for thinking content."""
+
     type: Literal["thinking_delta"] = "thinking_delta"
     thinking: str
 
 
 class InputJsonDelta(BaseModel):
     """Delta for tool input JSON."""
+
     type: Literal["input_json_delta"] = "input_json_delta"
     partial_json: str
 
@@ -351,11 +380,12 @@ class InputJsonDelta(BaseModel):
 class ContentBlockDeltaEvent(BaseModel):
     """
     Event sent when content block is updated.
-    
+
     Attributes:
         index: Index of the content block being updated
         delta: The delta update (text_delta, thinking_delta, or input_json_delta)
     """
+
     type: Literal["content_block_delta"] = "content_block_delta"
     index: int
     delta: Union[TextDelta, ThinkingDelta, InputJsonDelta, Dict[str, Any]]
@@ -365,23 +395,26 @@ class ContentBlockStopEvent(BaseModel):
     """
     Event sent when a content block is complete.
     """
+
     type: Literal["content_block_stop"] = "content_block_stop"
     index: int
 
 
 class MessageDeltaUsage(BaseModel):
     """Usage information in message_delta event."""
+
     output_tokens: int
 
 
 class MessageDeltaEvent(BaseModel):
     """
     Event sent near the end of the stream with final message data.
-    
+
     Attributes:
         delta: Contains stop_reason and stop_sequence
         usage: Output token count
     """
+
     type: Literal["message_delta"] = "message_delta"
     delta: Dict[str, Any]
     usage: MessageDeltaUsage
@@ -391,6 +424,7 @@ class MessageStopEvent(BaseModel):
     """
     Event sent at the end of the message stream.
     """
+
     type: Literal["message_stop"] = "message_stop"
 
 
@@ -398,6 +432,7 @@ class PingEvent(BaseModel):
     """
     Ping event sent periodically to keep connection alive.
     """
+
     type: Literal["ping"] = "ping"
 
 
@@ -405,6 +440,7 @@ class ErrorEvent(BaseModel):
     """
     Error event sent when an error occurs during streaming.
     """
+
     type: Literal["error"] = "error"
     error: Dict[str, Any]
 
@@ -426,10 +462,12 @@ StreamingEvent = Union[
 # Error Models
 # ==================================================================================================
 
+
 class AnthropicErrorDetail(BaseModel):
     """
     Error detail in Anthropic format.
     """
+
     type: str
     message: str
 
@@ -438,5 +476,6 @@ class AnthropicErrorResponse(BaseModel):
     """
     Error response in Anthropic format.
     """
+
     type: Literal["error"] = "error"
     error: AnthropicErrorDetail

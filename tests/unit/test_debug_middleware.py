@@ -13,7 +13,7 @@ from starlette.responses import Response
 
 class TestDebugLoggerMiddlewareEndpointFiltering:
     """Tests for endpoint filtering in middleware."""
-    
+
     @pytest.mark.asyncio
     async def test_skips_health_endpoint(self):
         """
@@ -21,34 +21,34 @@ class TestDebugLoggerMiddlewareEndpointFiltering:
         Purpose: Ensure health checks are not logged.
         """
         print("Setup: Creating mock request for /health...")
-        
-        with patch('kiro.debug_middleware.DEBUG_MODE', 'all'):
+
+        with patch("kiro.debug_middleware.DEBUG_MODE", "all"):
             from kiro.debug_middleware import DebugLoggerMiddleware
-            
+
             middleware = DebugLoggerMiddleware(app=MagicMock())
-            
+
             # Mock request
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = "/health"
-            
+
             # Mock call_next
             mock_response = MagicMock(spec=Response)
             mock_call_next = AsyncMock(return_value=mock_response)
-            
+
             # Mock debug_logger at the source module
-            with patch('kiro.debug_logger.debug_logger') as mock_logger:
+            with patch("kiro.debug_logger.debug_logger") as mock_logger:
                 print("Action: Calling dispatch for /health...")
                 response = await middleware.dispatch(mock_request, mock_call_next)
-                
+
                 print("Verifying prepare_new_request was NOT called...")
                 mock_logger.prepare_new_request.assert_not_called()
-                
+
                 print("Verifying call_next was called...")
                 mock_call_next.assert_called_once_with(mock_request)
-                
+
                 print(f"Comparing response: Expected {mock_response}, Got {response}")
                 assert response == mock_response
-    
+
     @pytest.mark.asyncio
     async def test_skips_docs_endpoint(self):
         """
@@ -56,25 +56,25 @@ class TestDebugLoggerMiddlewareEndpointFiltering:
         Purpose: Ensure documentation is not logged.
         """
         print("Setup: Creating mock request for /docs...")
-        
-        with patch('kiro.debug_middleware.DEBUG_MODE', 'all'):
+
+        with patch("kiro.debug_middleware.DEBUG_MODE", "all"):
             from kiro.debug_middleware import DebugLoggerMiddleware
-            
+
             middleware = DebugLoggerMiddleware(app=MagicMock())
-            
+
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = "/docs"
-            
+
             mock_response = MagicMock(spec=Response)
             mock_call_next = AsyncMock(return_value=mock_response)
-            
-            with patch('kiro.debug_logger.debug_logger') as mock_logger:
+
+            with patch("kiro.debug_logger.debug_logger") as mock_logger:
                 print("Action: Calling dispatch for /docs...")
-                response = await middleware.dispatch(mock_request, mock_call_next)
-                
+                await middleware.dispatch(mock_request, mock_call_next)
+
                 print("Verifying prepare_new_request was NOT called...")
                 mock_logger.prepare_new_request.assert_not_called()
-    
+
     @pytest.mark.asyncio
     async def test_skips_root_endpoint(self):
         """
@@ -82,25 +82,25 @@ class TestDebugLoggerMiddlewareEndpointFiltering:
         Purpose: Ensure root endpoint is not logged.
         """
         print("Setup: Creating mock request for /...")
-        
-        with patch('kiro.debug_middleware.DEBUG_MODE', 'all'):
+
+        with patch("kiro.debug_middleware.DEBUG_MODE", "all"):
             from kiro.debug_middleware import DebugLoggerMiddleware
-            
+
             middleware = DebugLoggerMiddleware(app=MagicMock())
-            
+
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = "/"
-            
+
             mock_response = MagicMock(spec=Response)
             mock_call_next = AsyncMock(return_value=mock_response)
-            
-            with patch('kiro.debug_logger.debug_logger') as mock_logger:
+
+            with patch("kiro.debug_logger.debug_logger") as mock_logger:
                 print("Action: Calling dispatch for /...")
                 await middleware.dispatch(mock_request, mock_call_next)
-                
+
                 print("Verifying prepare_new_request was NOT called...")
                 mock_logger.prepare_new_request.assert_not_called()
-    
+
     @pytest.mark.asyncio
     async def test_processes_chat_completions_endpoint(self):
         """
@@ -108,29 +108,31 @@ class TestDebugLoggerMiddlewareEndpointFiltering:
         Purpose: Ensure OpenAI endpoint is logged.
         """
         print("Setup: Creating mock request for /v1/chat/completions...")
-        
-        with patch('kiro.debug_middleware.DEBUG_MODE', 'all'):
+
+        with patch("kiro.debug_middleware.DEBUG_MODE", "all"):
             from kiro.debug_middleware import DebugLoggerMiddleware
-            
+
             middleware = DebugLoggerMiddleware(app=MagicMock())
-            
+
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = "/v1/chat/completions"
             mock_request.body = AsyncMock(return_value=b'{"model": "test"}')
-            
+
             mock_response = MagicMock(spec=Response)
             mock_call_next = AsyncMock(return_value=mock_response)
-            
-            with patch('kiro.debug_logger.debug_logger') as mock_logger:
+
+            with patch("kiro.debug_logger.debug_logger") as mock_logger:
                 print("Action: Calling dispatch for /v1/chat/completions...")
                 await middleware.dispatch(mock_request, mock_call_next)
-                
+
                 print("Verifying prepare_new_request was called...")
                 mock_logger.prepare_new_request.assert_called_once()
-                
+
                 print("Verifying log_request_body was called...")
-                mock_logger.log_request_body.assert_called_once_with(b'{"model": "test"}')
-    
+                mock_logger.log_request_body.assert_called_once_with(
+                    b'{"model": "test"}'
+                )
+
     @pytest.mark.asyncio
     async def test_processes_messages_endpoint(self):
         """
@@ -138,30 +140,30 @@ class TestDebugLoggerMiddlewareEndpointFiltering:
         Purpose: Ensure Anthropic endpoint is logged.
         """
         print("Setup: Creating mock request for /v1/messages...")
-        
-        with patch('kiro.debug_middleware.DEBUG_MODE', 'all'):
+
+        with patch("kiro.debug_middleware.DEBUG_MODE", "all"):
             from kiro.debug_middleware import DebugLoggerMiddleware
-            
+
             middleware = DebugLoggerMiddleware(app=MagicMock())
-            
+
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = "/v1/messages"
             mock_request.body = AsyncMock(return_value=b'{"model": "claude"}')
-            
+
             mock_response = MagicMock(spec=Response)
             mock_call_next = AsyncMock(return_value=mock_response)
-            
-            with patch('kiro.debug_logger.debug_logger') as mock_logger:
+
+            with patch("kiro.debug_logger.debug_logger") as mock_logger:
                 print("Action: Calling dispatch for /v1/messages...")
                 await middleware.dispatch(mock_request, mock_call_next)
-                
+
                 print("Verifying prepare_new_request was called...")
                 mock_logger.prepare_new_request.assert_called_once()
 
 
 class TestDebugLoggerMiddlewareModeHandling:
     """Tests for DEBUG_MODE handling in middleware."""
-    
+
     @pytest.mark.asyncio
     async def test_skips_when_debug_mode_off(self):
         """
@@ -169,28 +171,28 @@ class TestDebugLoggerMiddlewareModeHandling:
         Purpose: Ensure logging is disabled in off mode.
         """
         print("Setup: DEBUG_MODE=off...")
-        
-        with patch('kiro.debug_middleware.DEBUG_MODE', 'off'):
+
+        with patch("kiro.debug_middleware.DEBUG_MODE", "off"):
             from kiro.debug_middleware import DebugLoggerMiddleware
-            
+
             middleware = DebugLoggerMiddleware(app=MagicMock())
-            
+
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = "/v1/chat/completions"
-            
+
             mock_response = MagicMock(spec=Response)
             mock_call_next = AsyncMock(return_value=mock_response)
-            
-            with patch('kiro.debug_logger.debug_logger') as mock_logger:
+
+            with patch("kiro.debug_logger.debug_logger") as mock_logger:
                 print("Action: Calling dispatch with DEBUG_MODE=off...")
-                response = await middleware.dispatch(mock_request, mock_call_next)
-                
+                await middleware.dispatch(mock_request, mock_call_next)
+
                 print("Verifying prepare_new_request was NOT called...")
                 mock_logger.prepare_new_request.assert_not_called()
-                
+
                 print("Verifying call_next was called...")
                 mock_call_next.assert_called_once()
-    
+
     @pytest.mark.asyncio
     async def test_processes_when_debug_mode_errors(self):
         """
@@ -198,26 +200,26 @@ class TestDebugLoggerMiddlewareModeHandling:
         Purpose: Ensure errors mode activates logging.
         """
         print("Setup: DEBUG_MODE=errors...")
-        
-        with patch('kiro.debug_middleware.DEBUG_MODE', 'errors'):
+
+        with patch("kiro.debug_middleware.DEBUG_MODE", "errors"):
             from kiro.debug_middleware import DebugLoggerMiddleware
-            
+
             middleware = DebugLoggerMiddleware(app=MagicMock())
-            
+
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = "/v1/chat/completions"
             mock_request.body = AsyncMock(return_value=b'{"test": "data"}')
-            
+
             mock_response = MagicMock(spec=Response)
             mock_call_next = AsyncMock(return_value=mock_response)
-            
-            with patch('kiro.debug_logger.debug_logger') as mock_logger:
+
+            with patch("kiro.debug_logger.debug_logger") as mock_logger:
                 print("Action: Calling dispatch with DEBUG_MODE=errors...")
                 await middleware.dispatch(mock_request, mock_call_next)
-                
+
                 print("Verifying prepare_new_request was called...")
                 mock_logger.prepare_new_request.assert_called_once()
-    
+
     @pytest.mark.asyncio
     async def test_processes_when_debug_mode_all(self):
         """
@@ -225,30 +227,30 @@ class TestDebugLoggerMiddlewareModeHandling:
         Purpose: Ensure all mode activates logging.
         """
         print("Setup: DEBUG_MODE=all...")
-        
-        with patch('kiro.debug_middleware.DEBUG_MODE', 'all'):
+
+        with patch("kiro.debug_middleware.DEBUG_MODE", "all"):
             from kiro.debug_middleware import DebugLoggerMiddleware
-            
+
             middleware = DebugLoggerMiddleware(app=MagicMock())
-            
+
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = "/v1/messages"
             mock_request.body = AsyncMock(return_value=b'{"test": "data"}')
-            
+
             mock_response = MagicMock(spec=Response)
             mock_call_next = AsyncMock(return_value=mock_response)
-            
-            with patch('kiro.debug_logger.debug_logger') as mock_logger:
+
+            with patch("kiro.debug_logger.debug_logger") as mock_logger:
                 print("Action: Calling dispatch with DEBUG_MODE=all...")
                 await middleware.dispatch(mock_request, mock_call_next)
-                
+
                 print("Verifying prepare_new_request was called...")
                 mock_logger.prepare_new_request.assert_called_once()
 
 
 class TestDebugLoggerMiddlewareErrorHandling:
     """Tests for error handling in middleware."""
-    
+
     @pytest.mark.asyncio
     async def test_handles_body_read_error_gracefully(self):
         """
@@ -256,32 +258,32 @@ class TestDebugLoggerMiddlewareErrorHandling:
         Purpose: Ensure body read errors don't break the request.
         """
         print("Setup: Simulating body read error...")
-        
-        with patch('kiro.debug_middleware.DEBUG_MODE', 'all'):
+
+        with patch("kiro.debug_middleware.DEBUG_MODE", "all"):
             from kiro.debug_middleware import DebugLoggerMiddleware
-            
+
             middleware = DebugLoggerMiddleware(app=MagicMock())
-            
+
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = "/v1/chat/completions"
             mock_request.body = AsyncMock(side_effect=Exception("Body read error"))
-            
+
             mock_response = MagicMock(spec=Response)
             mock_call_next = AsyncMock(return_value=mock_response)
-            
-            with patch('kiro.debug_logger.debug_logger') as mock_logger:
+
+            with patch("kiro.debug_logger.debug_logger") as mock_logger:
                 print("Action: Calling dispatch with body read error...")
-                response = await middleware.dispatch(mock_request, mock_call_next)
-                
+                await middleware.dispatch(mock_request, mock_call_next)
+
                 print("Verifying prepare_new_request was called...")
                 mock_logger.prepare_new_request.assert_called_once()
-                
+
                 print("Verifying log_request_body was NOT called (due to error)...")
                 mock_logger.log_request_body.assert_not_called()
-                
+
                 print("Verifying call_next was called (request continued)...")
                 mock_call_next.assert_called_once()
-    
+
     @pytest.mark.asyncio
     async def test_skips_empty_body(self):
         """
@@ -289,33 +291,33 @@ class TestDebugLoggerMiddlewareErrorHandling:
         Purpose: Ensure empty requests don't create unnecessary logs.
         """
         print("Setup: Creating request with empty body...")
-        
-        with patch('kiro.debug_middleware.DEBUG_MODE', 'all'):
+
+        with patch("kiro.debug_middleware.DEBUG_MODE", "all"):
             from kiro.debug_middleware import DebugLoggerMiddleware
-            
+
             middleware = DebugLoggerMiddleware(app=MagicMock())
-            
+
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = "/v1/chat/completions"
-            mock_request.body = AsyncMock(return_value=b'')  # Empty body
-            
+            mock_request.body = AsyncMock(return_value=b"")  # Empty body
+
             mock_response = MagicMock(spec=Response)
             mock_call_next = AsyncMock(return_value=mock_response)
-            
-            with patch('kiro.debug_logger.debug_logger') as mock_logger:
+
+            with patch("kiro.debug_logger.debug_logger") as mock_logger:
                 print("Action: Calling dispatch with empty body...")
                 await middleware.dispatch(mock_request, mock_call_next)
-                
+
                 print("Verifying prepare_new_request was called...")
                 mock_logger.prepare_new_request.assert_called_once()
-                
+
                 print("Verifying log_request_body was NOT called (body is empty)...")
                 mock_logger.log_request_body.assert_not_called()
 
 
 class TestDebugLoggerMiddlewareResponsePassthrough:
     """Tests for transparent response passthrough."""
-    
+
     @pytest.mark.asyncio
     async def test_returns_response_from_call_next(self):
         """
@@ -323,32 +325,36 @@ class TestDebugLoggerMiddlewareResponsePassthrough:
         Purpose: Ensure middleware doesn't modify the response.
         """
         print("Setup: Creating mock response...")
-        
-        with patch('kiro.debug_middleware.DEBUG_MODE', 'all'):
+
+        with patch("kiro.debug_middleware.DEBUG_MODE", "all"):
             from kiro.debug_middleware import DebugLoggerMiddleware
-            
+
             middleware = DebugLoggerMiddleware(app=MagicMock())
-            
+
             mock_request = MagicMock(spec=Request)
             mock_request.url.path = "/v1/chat/completions"
             mock_request.body = AsyncMock(return_value=b'{"test": "data"}')
-            
+
             expected_response = MagicMock(spec=Response)
             expected_response.status_code = 200
             mock_call_next = AsyncMock(return_value=expected_response)
-            
-            with patch('kiro.debug_logger.debug_logger'):
+
+            with patch("kiro.debug_logger.debug_logger"):
                 print("Action: Calling dispatch...")
-                actual_response = await middleware.dispatch(mock_request, mock_call_next)
-                
-                print(f"Comparing response: Expected {expected_response}, Got {actual_response}")
+                actual_response = await middleware.dispatch(
+                    mock_request, mock_call_next
+                )
+
+                print(
+                    f"Comparing response: Expected {expected_response}, Got {actual_response}"
+                )
                 assert actual_response == expected_response
                 assert actual_response.status_code == 200
 
 
 class TestLoggedEndpointsConstant:
     """Tests for LOGGED_ENDPOINTS constant."""
-    
+
     def test_logged_endpoints_contains_chat_completions(self):
         """
         What it does: Verifies that LOGGED_ENDPOINTS contains /v1/chat/completions.
@@ -356,10 +362,10 @@ class TestLoggedEndpointsConstant:
         """
         print("Checking LOGGED_ENDPOINTS...")
         from kiro.debug_middleware import LOGGED_ENDPOINTS
-        
+
         print(f"LOGGED_ENDPOINTS contents: {LOGGED_ENDPOINTS}")
         assert "/v1/chat/completions" in LOGGED_ENDPOINTS
-    
+
     def test_logged_endpoints_contains_messages(self):
         """
         What it does: Verifies that LOGGED_ENDPOINTS contains /v1/messages.
@@ -367,10 +373,10 @@ class TestLoggedEndpointsConstant:
         """
         print("Checking LOGGED_ENDPOINTS...")
         from kiro.debug_middleware import LOGGED_ENDPOINTS
-        
+
         print(f"LOGGED_ENDPOINTS contents: {LOGGED_ENDPOINTS}")
         assert "/v1/messages" in LOGGED_ENDPOINTS
-    
+
     def test_logged_endpoints_is_frozenset(self):
         """
         What it does: Verifies that LOGGED_ENDPOINTS is a frozenset.
@@ -378,6 +384,6 @@ class TestLoggedEndpointsConstant:
         """
         print("Checking LOGGED_ENDPOINTS type...")
         from kiro.debug_middleware import LOGGED_ENDPOINTS
-        
+
         print(f"LOGGED_ENDPOINTS type: {type(LOGGED_ENDPOINTS)}")
         assert isinstance(LOGGED_ENDPOINTS, frozenset)

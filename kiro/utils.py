@@ -37,20 +37,20 @@ if TYPE_CHECKING:
 def get_machine_fingerprint() -> str:
     """
     Generates a unique machine fingerprint based on hostname and username.
-    
+
     Used for User-Agent formation to identify a specific gateway installation.
-    
+
     Returns:
         SHA256 hash of the string "{hostname}-{username}-kiro-gateway"
     """
     try:
         import socket
         import getpass
-        
+
         hostname = socket.gethostname()
         username = getpass.getuser()
         unique_string = f"{hostname}-{username}-kiro-gateway"
-        
+
         return hashlib.sha256(unique_string.encode()).hexdigest()
     except Exception as e:
         logger.warning(f"Failed to get machine fingerprint: {e}")
@@ -60,26 +60,29 @@ def get_machine_fingerprint() -> str:
 def get_kiro_headers(auth_manager: "KiroAuthManager", token: str) -> dict:
     """
     Builds headers for Kiro API requests.
-    
+
     Includes all necessary headers for authentication and identification:
     - Authorization with Bearer token
     - User-Agent with fingerprint
     - AWS CodeWhisperer specific headers
-    
+
+    UPDATED: Headers updated to match AWS Q / Kiro migration (Jan 2026).
+    See MY_INSPECTIONS.MD for source.
+
     Args:
         auth_manager: Authentication manager for obtaining fingerprint
         token: Access token for authorization
-    
+
     Returns:
         Dictionary with headers for HTTP request
     """
     fingerprint = auth_manager.fingerprint
-    
+
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "User-Agent": f"aws-sdk-js/1.0.27 ua/2.1 os/win32#10.0.19044 lang/js md/nodejs#22.21.1 api/codewhispererstreaming#1.0.27 m/E KiroIDE-0.7.45-{fingerprint}",
-        "x-amz-user-agent": f"aws-sdk-js/1.0.27 KiroIDE-0.7.45-{fingerprint}",
+        "User-Agent": f"aws-sdk-js/1.0.0 ua/2.1 os/win32#10.0.19045 lang/js md/nodejs#22.21.1 api/codewhispererruntime#1.0.0 m/N,E KiroIDE-0.8.86-{fingerprint}",
+        "x-amz-user-agent": f"aws-sdk-js/1.0.0 KiroIDE-0.8.86-{fingerprint}",
         "x-amzn-codewhisperer-optout": "true",
         "x-amzn-kiro-agent-mode": "vibe",
         "amz-sdk-invocation-id": str(uuid.uuid4()),
@@ -90,7 +93,7 @@ def get_kiro_headers(auth_manager: "KiroAuthManager", token: str) -> dict:
 def generate_completion_id() -> str:
     """
     Generates a unique ID for chat completion.
-    
+
     Returns:
         ID in format "chatcmpl-{uuid_hex}"
     """
@@ -100,7 +103,7 @@ def generate_completion_id() -> str:
 def generate_conversation_id() -> str:
     """
     Generates a unique ID for conversation.
-    
+
     Returns:
         UUID in string format
     """
@@ -110,7 +113,7 @@ def generate_conversation_id() -> str:
 def generate_tool_call_id() -> str:
     """
     Generates a unique ID for tool call.
-    
+
     Returns:
         ID in format "call_{uuid_hex[:8]}"
     """
