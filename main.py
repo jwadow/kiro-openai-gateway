@@ -374,11 +374,18 @@ async def lifespan(app: FastAPI):
         hidden_models=HIDDEN_MODELS
     )
     logger.info("Model resolver initialized")
-    
+
+    # Start background token refresh for multi-token setups
+    await app.state.auth_manager.start_background_refresh()
+
     yield
-    
+
     # Graceful shutdown
     logger.info("Shutting down application...")
+
+    # Stop background token refresh
+    await app.state.auth_manager.stop_background_refresh()
+
     try:
         await app.state.http_client.aclose()
         logger.info("Shared HTTP client closed")

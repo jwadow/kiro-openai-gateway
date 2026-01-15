@@ -80,12 +80,17 @@ class TokenHealth:
         self.last_success_time: Optional[datetime] = None
         self.total_successes = 0
         self.total_failures = 0
+        # Per-token access token storage for background refresh
+        self.access_token: Optional[str] = None
+        self.expires_at: Optional[datetime] = None
 
-    def record_success(self) -> None:
+    def record_success(self, access_token: str, expires_at: datetime) -> None:
         """Record a successful token refresh."""
         self.consecutive_failures = 0
         self.last_success_time = datetime.now(timezone.utc)
         self.total_successes += 1
+        self.access_token = access_token
+        self.expires_at = expires_at
 
     def record_failure(self) -> None:
         """Record a failed token refresh."""
@@ -111,6 +116,19 @@ class TokenHealth:
         cooldown_until = self.last_failure_time + timedelta(seconds=backoff_seconds)
 
         return datetime.now(timezone.utc) >= cooldown_until
+
+    def is_expiring_soon(self, threshold_seconds: int = 600) -> bool:
+        """Check if this token's access token is expiring soon."""
+        if not self.expires_at:
+            return True
+        now = datetime.now(timezone.utc)
+        return (self.expires_at.timestamp() - now.timestamp()) <= threshold_seconds
+
+    def has_valid_access_token(self) -> bool:
+        """Check if this token has a valid (non-expired) access token."""
+        if not self.access_token or not self.expires_at:
+            return False
+        return datetime.now(timezone.utc) < self.expires_at
 
     @property
     def masked_token(self) -> str:
@@ -226,7 +244,12 @@ class KiroAuthManager:
         self._access_token: Optional[str] = None
         self._expires_at: Optional[datetime] = None
         self._lock = asyncio.Lock()
-        
+
+        # Background refresh task
+        self._background_refresh_task: Optional[asyncio.Task] = None
+        self._background_refresh_interval: int = 300  # 5 minutes
+        self._shutdown_event: Optional[asyncio.Event] = None
+
         # Auth type will be determined after loading credentials
         self._auth_type: AuthType = AuthType.KIRO_DESKTOP
         
@@ -328,7 +351,16 @@ class KiroAuthManager:
     def _record_token_success(self) -> None:
         """Record successful refresh for current token."""
         if self._refresh_token and self._refresh_token in self._token_health:
-            self._token_health[self._refresh_token].record_success()
+            if self._access_token and self._expires_at:
+                self._token_health[self._refresh_token].record_success(
+                    self._access_token, self._expires_at
+                )
+            else:
+                # Fallback: just update timestamps without storing token
+                health = self._token_health[self._refresh_token]
+                health.consecutive_failures = 0
+                health.last_success_time = datetime.now(timezone.utc)
+                health.total_successes += 1
 
     def get_token_stats(self) -> dict:
         """
@@ -341,6 +373,7 @@ class KiroAuthManager:
             "total_tokens": len(self._refresh_tokens),
             "current_index": self._current_token_index,
             "total_requests": self._total_requests,
+            "background_refresh_active": self._background_refresh_task is not None,
             "tokens": []
         }
 
@@ -351,6 +384,8 @@ class KiroAuthManager:
                     "index": i,
                     "masked": health.masked_token,
                     "healthy": health.is_healthy(),
+                    "has_valid_token": health.has_valid_access_token(),
+                    "expires_at": health.expires_at.isoformat() if health.expires_at else None,
                     "consecutive_failures": health.consecutive_failures,
                     "total_successes": health.total_successes,
                     "total_failures": health.total_failures,
@@ -359,6 +394,160 @@ class KiroAuthManager:
                 })
 
         return stats
+
+    async def start_background_refresh(self) -> None:
+        """
+        Start background task to refresh all tokens periodically.
+
+        This keeps all tokens in the pool "warm" and ready to use,
+        reducing latency on requests (no waiting for refresh).
+        """
+        if len(self._refresh_tokens) <= 1:
+            logger.debug("Background refresh not needed for single token")
+            return
+
+        if self._background_refresh_task is not None:
+            logger.warning("Background refresh already running")
+            return
+
+        self._shutdown_event = asyncio.Event()
+        self._background_refresh_task = asyncio.create_task(
+            self._background_refresh_loop(),
+            name="token-background-refresh"
+        )
+        logger.info(f"Background token refresh started (interval: {self._background_refresh_interval}s)")
+
+    async def stop_background_refresh(self) -> None:
+        """Stop the background refresh task gracefully."""
+        if self._background_refresh_task is None:
+            return
+
+        logger.info("Stopping background token refresh...")
+        if self._shutdown_event:
+            self._shutdown_event.set()
+
+        try:
+            # Wait for task to finish with timeout
+            await asyncio.wait_for(self._background_refresh_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Background refresh task did not stop gracefully, cancelling...")
+            self._background_refresh_task.cancel()
+            try:
+                await self._background_refresh_task
+            except asyncio.CancelledError:
+                pass
+        except asyncio.CancelledError:
+            pass
+
+        self._background_refresh_task = None
+        self._shutdown_event = None
+        logger.info("Background token refresh stopped")
+
+    async def _background_refresh_loop(self) -> None:
+        """
+        Background loop that refreshes all tokens periodically.
+
+        Runs every _background_refresh_interval seconds and refreshes
+        any tokens that are expiring soon.
+        """
+        logger.info("Background refresh loop started")
+
+        # Initial refresh of all tokens
+        await self._refresh_all_tokens()
+
+        while True:
+            try:
+                # Wait for interval or shutdown signal
+                if self._shutdown_event:
+                    try:
+                        await asyncio.wait_for(
+                            self._shutdown_event.wait(),
+                            timeout=self._background_refresh_interval
+                        )
+                        # Shutdown signaled
+                        break
+                    except asyncio.TimeoutError:
+                        # Normal timeout, continue with refresh
+                        pass
+
+                await self._refresh_all_tokens()
+
+            except asyncio.CancelledError:
+                logger.debug("Background refresh loop cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in background refresh loop: {e}")
+                # Continue running despite errors
+                await asyncio.sleep(60)  # Wait a bit before retrying
+
+        logger.info("Background refresh loop ended")
+
+    async def _refresh_all_tokens(self) -> None:
+        """
+        Refresh all tokens that are expiring soon.
+
+        Each token is refreshed independently to maintain separate
+        access tokens for the entire pool.
+        """
+        if not self._refresh_tokens or len(self._refresh_tokens) <= 1:
+            return
+
+        logger.debug(f"Background refresh: checking {len(self._refresh_tokens)} tokens")
+        refreshed = 0
+        failed = 0
+
+        for refresh_token in self._refresh_tokens:
+            health = self._token_health.get(refresh_token)
+            if not health:
+                continue
+
+            # Skip if token has valid access token that's not expiring soon
+            if health.has_valid_access_token() and not health.is_expiring_soon(threshold_seconds=self._background_refresh_interval + 60):
+                continue
+
+            # Skip unhealthy tokens (in backoff)
+            if not health.is_healthy():
+                logger.debug(f"Skipping unhealthy token {health.masked_token}")
+                continue
+
+            try:
+                await self._refresh_single_token(refresh_token)
+                refreshed += 1
+            except Exception as e:
+                logger.warning(f"Background refresh failed for {health.masked_token}: {e}")
+                health.record_failure()
+                failed += 1
+
+        if refreshed > 0 or failed > 0:
+            logger.info(f"Background refresh complete: {refreshed} refreshed, {failed} failed")
+
+    async def _refresh_single_token(self, refresh_token: str) -> None:
+        """
+        Refresh a single token and store its access token.
+
+        Args:
+            refresh_token: The refresh token to use
+        """
+        health = self._token_health.get(refresh_token)
+        if not health:
+            return
+
+        # Temporarily set this as the current refresh token
+        original_refresh_token = self._refresh_token
+        self._refresh_token = refresh_token
+
+        try:
+            # Perform the refresh
+            await self._refresh_token_request()
+
+            # Store the access token in the health tracker
+            if self._access_token and self._expires_at:
+                health.record_success(self._access_token, self._expires_at)
+                logger.debug(f"Refreshed token {health.masked_token}, expires: {self._expires_at.isoformat()}")
+
+        finally:
+            # Restore original refresh token
+            self._refresh_token = original_refresh_token
     
     def _load_credentials_from_sqlite(self, db_path: str) -> None:
         """
@@ -783,9 +972,10 @@ class KiroAuthManager:
         Automatically refreshes the token if it has expired or is about to expire.
 
         Token Rotation Strategy (for multiple tokens):
-        1. Round-robin: Each request uses the next healthy token
-        2. Fallback: On failure, automatically tries next healthy token
-        3. Health tracking: Failed tokens are temporarily avoided (exponential backoff)
+        1. Pool check: First tries to get a pre-refreshed token from the pool
+        2. Round-robin: Each request uses the next healthy token
+        3. Fallback: On failure, automatically tries next healthy token
+        4. Health tracking: Failed tokens are temporarily avoided (exponential backoff)
 
         For SQLite mode (kiro-cli): implements graceful degradation when refresh fails.
         If kiro-cli has been running and refreshing tokens in memory (without persisting
@@ -804,6 +994,19 @@ class KiroAuthManager:
             # Token is valid and not expiring soon - just return it
             if self._access_token and not self.is_token_expiring_soon():
                 return self._access_token
+
+            # For multiple tokens: check if any token in the pool has a valid access token
+            # This leverages background refresh to avoid on-demand refresh latency
+            if len(self._refresh_tokens) > 1:
+                for refresh_token in self._refresh_tokens:
+                    health = self._token_health.get(refresh_token)
+                    if health and health.has_valid_access_token() and not health.is_expiring_soon():
+                        # Use the pre-refreshed token from the pool
+                        self._access_token = health.access_token
+                        self._expires_at = health.expires_at
+                        self._refresh_token = refresh_token
+                        logger.debug(f"Using pre-refreshed token from pool: {health.masked_token}")
+                        return self._access_token
 
             # SQLite mode: reload credentials first, kiro-cli might have updated them
             if self._sqlite_db and self.is_token_expiring_soon():
