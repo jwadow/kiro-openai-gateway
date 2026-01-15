@@ -210,9 +210,13 @@ class KiroHttpClient:
                 headers = get_kiro_headers(self.auth_manager, token)
                 
                 if stream:
+                    # Prevent CLOSE_WAIT connection leak (issue #38)
+                    headers["Connection"] = "close"
                     req = client.build_request(method, url, json=json_data, headers=headers)
+                    logger.debug("Sending request to Kiro API...")
                     response = await client.send(req, stream=True)
                 else:
+                    logger.debug("Sending request to Kiro API...")
                     response = await client.request(method, url, json=json_data, headers=headers)
                 
                 # Check status

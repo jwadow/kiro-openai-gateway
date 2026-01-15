@@ -1022,3 +1022,133 @@ class TestKiroHttpClientGracefulClose:
             warning_message = str(mock_logger.warning.call_args)
             print(f"Warning message: {warning_message}")
             assert "Connection reset" in warning_message or "Error closing" in warning_message
+
+
+class TestKiroHttpClientConnectionCloseHeader:
+    """Tests for Connection: close header on streaming requests (issue #38)."""
+    
+    @pytest.mark.asyncio
+    async def test_streaming_request_includes_connection_close_header(self, mock_auth_manager_for_http):
+        """
+        What it does: Verifies that streaming requests include Connection: close header.
+        Purpose: Prevent CLOSE_WAIT connection leak by disabling connection reuse for streaming.
+        """
+        print("Setup: Creating KiroHttpClient...")
+        http_client = KiroHttpClient(mock_auth_manager_for_http)
+        
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        
+        mock_request = Mock()
+        captured_headers = {}
+        
+        def capture_build_request(method, url, json, headers):
+            captured_headers.update(headers)
+            return mock_request
+        
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.build_request = Mock(side_effect=capture_build_request)
+        mock_client.send = AsyncMock(return_value=mock_response)
+        
+        print("Action: Executing streaming request...")
+        with patch.object(http_client, '_get_client', return_value=mock_client):
+            with patch('kiro.http_client.get_kiro_headers', return_value={"Authorization": "Bearer test"}):
+                response = await http_client.request_with_retry(
+                    "POST",
+                    "https://api.example.com/test",
+                    {"data": "value"},
+                    stream=True
+                )
+        
+        print("Verification: Connection: close header is present...")
+        print(f"Captured headers: {captured_headers}")
+        assert "Connection" in captured_headers, f"Connection header not found in: {captured_headers}"
+        print(f"Comparing Connection: Expected 'close', Got '{captured_headers['Connection']}'")
+        assert captured_headers["Connection"] == "close"
+        assert response.status_code == 200
+    
+    @pytest.mark.asyncio
+    async def test_non_streaming_request_does_not_include_connection_close_header(self, mock_auth_manager_for_http):
+        """
+        What it does: Verifies that non-streaming requests do NOT include Connection: close header.
+        Purpose: Ensure connection pooling is preserved for non-streaming requests.
+        """
+        print("Setup: Creating KiroHttpClient...")
+        http_client = KiroHttpClient(mock_auth_manager_for_http)
+        
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        
+        captured_headers = {}
+        
+        async def capture_request(method, url, json, headers):
+            captured_headers.update(headers)
+            return mock_response
+        
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.request = AsyncMock(side_effect=capture_request)
+        
+        print("Action: Executing non-streaming request...")
+        with patch.object(http_client, '_get_client', return_value=mock_client):
+            with patch('kiro.http_client.get_kiro_headers', return_value={"Authorization": "Bearer test"}):
+                response = await http_client.request_with_retry(
+                    "POST",
+                    "https://api.example.com/test",
+                    {"data": "value"},
+                    stream=False
+                )
+        
+        print("Verification: Connection: close header is NOT present...")
+        print(f"Captured headers: {captured_headers}")
+        assert "Connection" not in captured_headers, f"Connection header should not be present for non-streaming: {captured_headers}"
+        assert response.status_code == 200
+    
+    @pytest.mark.asyncio
+    async def test_streaming_connection_close_preserves_other_headers(self, mock_auth_manager_for_http):
+        """
+        What it does: Verifies that adding Connection: close doesn't remove other headers.
+        Purpose: Ensure Authorization and other headers are preserved.
+        """
+        print("Setup: Creating KiroHttpClient...")
+        http_client = KiroHttpClient(mock_auth_manager_for_http)
+        
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        
+        mock_request = Mock()
+        captured_headers = {}
+        
+        def capture_build_request(method, url, json, headers):
+            captured_headers.update(headers)
+            return mock_request
+        
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.build_request = Mock(side_effect=capture_build_request)
+        mock_client.send = AsyncMock(return_value=mock_response)
+        
+        original_headers = {
+            "Authorization": "Bearer test_token",
+            "Content-Type": "application/json",
+            "X-Custom-Header": "custom_value"
+        }
+        
+        print("Action: Executing streaming request with multiple headers...")
+        with patch.object(http_client, '_get_client', return_value=mock_client):
+            with patch('kiro.http_client.get_kiro_headers', return_value=original_headers.copy()):
+                response = await http_client.request_with_retry(
+                    "POST",
+                    "https://api.example.com/test",
+                    {"data": "value"},
+                    stream=True
+                )
+        
+        print("Verification: All original headers preserved plus Connection: close...")
+        print(f"Captured headers: {captured_headers}")
+        assert captured_headers["Authorization"] == "Bearer test_token"
+        assert captured_headers["Content-Type"] == "application/json"
+        assert captured_headers["X-Custom-Header"] == "custom_value"
+        assert captured_headers["Connection"] == "close"
+        assert response.status_code == 200

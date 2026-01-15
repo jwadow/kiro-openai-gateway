@@ -86,7 +86,7 @@ tests/
 │   ├── test_model_resolver.py      # Dynamic Model Resolution System tests
 │   ├── test_models_anthropic.py    # Anthropic Pydantic models tests (all content blocks, tools, streaming)
 │   ├── test_models_openai.py       # OpenAI Pydantic models tests (messages, tools, responses, streaming)
-│   ├── test_parsers.py             # AwsEventStreamParser tests
+│   ├── test_parsers.py             # AwsEventStreamParser tests (including JSON truncation diagnostics)
 │   ├── test_routes_anthropic.py    # Anthropic API endpoint tests (/v1/messages)
 │   ├── test_routes_openai.py       # OpenAI API endpoint tests (/v1/chat/completions)
 │   ├── test_streaming_anthropic.py # Anthropic streaming response tests
