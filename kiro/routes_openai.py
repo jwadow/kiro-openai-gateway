@@ -106,7 +106,7 @@ async def root():
 async def health():
     """
     Detailed health check.
-    
+
     Returns:
         Status, timestamp and version
     """
@@ -114,6 +114,33 @@ async def health():
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": APP_VERSION
+    }
+
+
+@router.get("/health/tokens", dependencies=[Depends(verify_api_key)])
+async def health_tokens(request: Request):
+    """
+    Token health and rotation statistics.
+
+    Returns detailed information about refresh token pool:
+    - Total tokens configured
+    - Current rotation index
+    - Per-token health status (healthy/unhealthy)
+    - Success/failure counts
+    - Last success/failure timestamps
+
+    Requires API key authentication.
+
+    Returns:
+        Token statistics for monitoring
+    """
+    auth_manager = request.app.state.auth_manager
+    stats = auth_manager.get_token_stats()
+
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "token_rotation": stats
     }
 
 @router.get("/v1/models", response_model=ModelList, dependencies=[Depends(verify_api_key)])

@@ -65,17 +65,78 @@ class AuthType(Enum):
     AWS_SSO_OIDC = "aws_sso_oidc"
 
 
+class TokenHealth:
+    """
+    Tracks health status of a refresh token.
+
+    Used to avoid repeatedly trying tokens that have failed recently.
+    Implements exponential backoff for failed tokens.
+    """
+
+    def __init__(self, token: str):
+        self.token = token
+        self.consecutive_failures = 0
+        self.last_failure_time: Optional[datetime] = None
+        self.last_success_time: Optional[datetime] = None
+        self.total_successes = 0
+        self.total_failures = 0
+
+    def record_success(self) -> None:
+        """Record a successful token refresh."""
+        self.consecutive_failures = 0
+        self.last_success_time = datetime.now(timezone.utc)
+        self.total_successes += 1
+
+    def record_failure(self) -> None:
+        """Record a failed token refresh."""
+        self.consecutive_failures += 1
+        self.last_failure_time = datetime.now(timezone.utc)
+        self.total_failures += 1
+
+    def is_healthy(self) -> bool:
+        """
+        Check if token should be tried.
+
+        Uses exponential backoff: after N consecutive failures,
+        wait 2^N seconds before retrying (max 5 minutes).
+        """
+        if self.consecutive_failures == 0:
+            return True
+
+        if not self.last_failure_time:
+            return True
+
+        # Exponential backoff: 2^failures seconds, max 300 seconds (5 min)
+        backoff_seconds = min(2 ** self.consecutive_failures, 300)
+        cooldown_until = self.last_failure_time + timedelta(seconds=backoff_seconds)
+
+        return datetime.now(timezone.utc) >= cooldown_until
+
+    @property
+    def masked_token(self) -> str:
+        """Return masked token for logging."""
+        if len(self.token) > 16:
+            return f"{self.token[:8]}...{self.token[-4:]}"
+        return "***"
+
+
 class KiroAuthManager:
     """
     Manages the token lifecycle for accessing Kiro API.
-    
+
     Supports:
     - Loading credentials from .env or JSON file
     - Automatic token refresh on expiration
     - Expiration time validation (expiresAt)
     - Saving updated tokens to file
     - Both Kiro Desktop Auth and AWS SSO OIDC (kiro-cli) authentication
-    
+    - Multiple refresh tokens with rotation and fallback
+
+    Token Rotation Strategy:
+    - Round-robin: Distributes load across all healthy tokens
+    - Fallback: On failure, tries next healthy token
+    - Health tracking: Avoids repeatedly trying failed tokens (exponential backoff)
+
     Attributes:
         profile_arn: AWS CodeWhisperer profile ARN
         region: AWS region
@@ -83,7 +144,7 @@ class KiroAuthManager:
         q_host: Q API host for the current region
         fingerprint: Unique machine fingerprint
         auth_type: Type of authentication (KIRO_DESKTOP or AWS_SSO_OIDC)
-    
+
     Example:
         >>> # Kiro Desktop Auth (default)
         >>> auth_manager = KiroAuthManager(
@@ -91,7 +152,14 @@ class KiroAuthManager:
         ...     region="us-east-1"
         ... )
         >>> token = await auth_manager.get_access_token()
-        
+
+        >>> # Multiple tokens with rotation
+        >>> auth_manager = KiroAuthManager(
+        ...     refresh_tokens=["token1", "token2", "token3"],
+        ...     region="us-east-1"
+        ... )
+        >>> token = await auth_manager.get_access_token()
+
         >>> # AWS SSO OIDC (kiro-cli) - auto-detected from credentials file
         >>> auth_manager = KiroAuthManager(
         ...     creds_file="~/.aws/sso/cache/your-cache.json"
@@ -130,8 +198,20 @@ class KiroAuthManager:
             self._refresh_tokens = [refresh_token]
         else:
             self._refresh_tokens = []
+
+        # Token rotation state
         self._current_token_index = 0
+        self._token_health: dict[str, TokenHealth] = {}
+        self._total_requests = 0  # For round-robin distribution
+
+        # Initialize health tracking for all tokens
+        for token in self._refresh_tokens:
+            self._token_health[token] = TokenHealth(token)
+
         self._refresh_token = self._refresh_tokens[0] if self._refresh_tokens else None
+
+        if len(self._refresh_tokens) > 1:
+            logger.info(f"Initialized with {len(self._refresh_tokens)} refresh tokens (rotation enabled)")
         self._profile_arn = profile_arn
         self._region = region
         self._creds_file = creds_file
@@ -171,7 +251,7 @@ class KiroAuthManager:
     def _detect_auth_type(self) -> None:
         """
         Detects authentication type based on available credentials.
-        
+
         AWS SSO OIDC credentials contain clientId and clientSecret.
         Kiro Desktop credentials do not contain these fields.
         """
@@ -181,6 +261,104 @@ class KiroAuthManager:
         else:
             self._auth_type = AuthType.KIRO_DESKTOP
             logger.info("Detected auth type: Kiro Desktop")
+
+    def _get_next_healthy_token(self) -> Optional[str]:
+        """
+        Get the next healthy token using round-robin distribution.
+
+        Returns:
+            Next healthy refresh token, or None if no healthy tokens available
+        """
+        if not self._refresh_tokens:
+            return None
+
+        num_tokens = len(self._refresh_tokens)
+        if num_tokens == 1:
+            return self._refresh_tokens[0]
+
+        # Round-robin: start from current index and find next healthy token
+        for i in range(num_tokens):
+            idx = (self._current_token_index + i) % num_tokens
+            token = self._refresh_tokens[idx]
+            health = self._token_health.get(token)
+
+            if health and health.is_healthy():
+                # Move index to next position for true round-robin
+                self._current_token_index = (idx + 1) % num_tokens
+                return token
+
+        # All tokens unhealthy - return the one with oldest failure (most likely recovered)
+        oldest_failure_token = min(
+            self._refresh_tokens,
+            key=lambda t: (self._token_health[t].last_failure_time or datetime.min.replace(tzinfo=timezone.utc))
+        )
+        logger.warning(f"All tokens unhealthy, trying oldest failed token")
+        return oldest_failure_token
+
+    def _rotate_to_next_token(self) -> Optional[str]:
+        """
+        Rotate to the next available token after a failure.
+
+        Called when current token fails. Marks current as failed and
+        returns next healthy token.
+
+        Returns:
+            Next healthy token, or None if no more tokens available
+        """
+        if not self._refresh_tokens or len(self._refresh_tokens) <= 1:
+            return None
+
+        # Mark current token as failed
+        if self._refresh_token and self._refresh_token in self._token_health:
+            self._token_health[self._refresh_token].record_failure()
+            logger.warning(
+                f"Token {self._token_health[self._refresh_token].masked_token} failed, "
+                f"consecutive failures: {self._token_health[self._refresh_token].consecutive_failures}"
+            )
+
+        # Get next healthy token
+        next_token = self._get_next_healthy_token()
+        if next_token and next_token != self._refresh_token:
+            self._refresh_token = next_token
+            logger.info(f"Rotated to token {self._token_health[next_token].masked_token}")
+            return next_token
+
+        return None
+
+    def _record_token_success(self) -> None:
+        """Record successful refresh for current token."""
+        if self._refresh_token and self._refresh_token in self._token_health:
+            self._token_health[self._refresh_token].record_success()
+
+    def get_token_stats(self) -> dict:
+        """
+        Get statistics about token health and usage.
+
+        Returns:
+            Dictionary with token statistics for monitoring
+        """
+        stats = {
+            "total_tokens": len(self._refresh_tokens),
+            "current_index": self._current_token_index,
+            "total_requests": self._total_requests,
+            "tokens": []
+        }
+
+        for i, token in enumerate(self._refresh_tokens):
+            health = self._token_health.get(token)
+            if health:
+                stats["tokens"].append({
+                    "index": i,
+                    "masked": health.masked_token,
+                    "healthy": health.is_healthy(),
+                    "consecutive_failures": health.consecutive_failures,
+                    "total_successes": health.total_successes,
+                    "total_failures": health.total_failures,
+                    "last_success": health.last_success_time.isoformat() if health.last_success_time else None,
+                    "last_failure": health.last_failure_time.isoformat() if health.last_failure_time else None,
+                })
+
+        return stats
     
     def _load_credentials_from_sqlite(self, db_path: str) -> None:
         """
@@ -471,7 +649,10 @@ class KiroAuthManager:
         )
         
         logger.info(f"Token refreshed via Kiro Desktop Auth, expires: {self._expires_at.isoformat()}")
-        
+
+        # Record success for health tracking
+        self._record_token_success()
+
         # Save to file
         self._save_credentials_to_file()
     
@@ -587,33 +768,43 @@ class KiroAuthManager:
         self._expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in - 60)
         
         logger.info(f"Token refreshed via AWS SSO OIDC, expires: {self._expires_at.isoformat()}")
-        
+
+        # Record success for health tracking
+        self._record_token_success()
+
         # Save to file
         self._save_credentials_to_file()
     
     async def get_access_token(self) -> str:
         """
         Returns a valid access_token, refreshing it if necessary.
-        
+
         Thread-safe method using asyncio.Lock.
         Automatically refreshes the token if it has expired or is about to expire.
-        
+
+        Token Rotation Strategy (for multiple tokens):
+        1. Round-robin: Each request uses the next healthy token
+        2. Fallback: On failure, automatically tries next healthy token
+        3. Health tracking: Failed tokens are temporarily avoided (exponential backoff)
+
         For SQLite mode (kiro-cli): implements graceful degradation when refresh fails.
         If kiro-cli has been running and refreshing tokens in memory (without persisting
         to SQLite), the refresh_token in SQLite becomes stale. In this case, we fall back
         to using the access_token directly until it actually expires.
-        
+
         Returns:
             Valid access token
-        
+
         Raises:
             ValueError: If unable to obtain access token
         """
         async with self._lock:
+            self._total_requests += 1
+
             # Token is valid and not expiring soon - just return it
             if self._access_token and not self.is_token_expiring_soon():
                 return self._access_token
-            
+
             # SQLite mode: reload credentials first, kiro-cli might have updated them
             if self._sqlite_db and self.is_token_expiring_soon():
                 logger.debug("SQLite mode: reloading credentials before refresh attempt")
@@ -622,52 +813,115 @@ class KiroAuthManager:
                 if self._access_token and not self.is_token_expiring_soon():
                     logger.debug("SQLite reload provided fresh token, no refresh needed")
                     return self._access_token
-            
-            # Try to refresh the token
-            try:
-                await self._refresh_token_request()
-            except httpx.HTTPStatusError as e:
-                # Graceful degradation for SQLite mode when refresh fails twice
-                # This happens when kiro-cli refreshed tokens in memory without persisting
-                if e.response.status_code == 400 and self._sqlite_db:
-                    logger.warning(
-                        "Token refresh failed with 400 after SQLite reload. "
-                        "This may happen if kiro-cli refreshed tokens in memory without persisting."
-                    )
-                    # Check if access_token is still usable
-                    if self._access_token and not self.is_token_expired():
+
+            # For multiple tokens: select next healthy token using round-robin
+            if len(self._refresh_tokens) > 1:
+                next_token = self._get_next_healthy_token()
+                if next_token:
+                    self._refresh_token = next_token
+
+            # Try to refresh with rotation fallback
+            last_error: Optional[Exception] = None
+            tokens_tried = 0
+            max_attempts = len(self._refresh_tokens) if self._refresh_tokens else 1
+
+            while tokens_tried < max_attempts:
+                tokens_tried += 1
+                try:
+                    await self._refresh_token_request()
+                    # Success - return the token
+                    if not self._access_token:
+                        raise ValueError("Failed to obtain access token")
+                    return self._access_token
+
+                except httpx.HTTPStatusError as e:
+                    last_error = e
+
+                    # Graceful degradation for SQLite mode when refresh fails
+                    if e.response.status_code == 400 and self._sqlite_db:
                         logger.warning(
-                            "Using existing access_token until it expires. "
-                            "Run 'kiro-cli login' when convenient to refresh credentials."
+                            "Token refresh failed with 400 after SQLite reload. "
+                            "This may happen if kiro-cli refreshed tokens in memory without persisting."
                         )
-                        return self._access_token
-                    else:
-                        raise ValueError(
-                            "Token expired and refresh failed. "
-                            "Please run 'kiro-cli login' to refresh your credentials."
-                        )
-                # Non-SQLite mode or non-400 error - propagate the exception
-                raise
-            except Exception:
-                # For any other exception, propagate it
-                raise
-            
+                        # Check if access_token is still usable
+                        if self._access_token and not self.is_token_expired():
+                            logger.warning(
+                                "Using existing access_token until it expires. "
+                                "Run 'kiro-cli login' when convenient to refresh credentials."
+                            )
+                            return self._access_token
+
+                    # Try rotating to next token (for multi-token setup)
+                    if len(self._refresh_tokens) > 1:
+                        next_token = self._rotate_to_next_token()
+                        if next_token:
+                            logger.info(f"Retrying with next token (attempt {tokens_tried + 1}/{max_attempts})")
+                            continue
+
+                    # No more tokens to try or single token mode
+                    break
+
+                except Exception as e:
+                    last_error = e
+                    # For non-HTTP errors, try rotating if we have multiple tokens
+                    if len(self._refresh_tokens) > 1:
+                        next_token = self._rotate_to_next_token()
+                        if next_token:
+                            logger.info(f"Retrying with next token after error: {e}")
+                            continue
+                    break
+
+            # All tokens failed
+            if last_error:
+                if isinstance(last_error, httpx.HTTPStatusError) and last_error.response.status_code == 400:
+                    raise ValueError(
+                        "Token expired and refresh failed for all tokens. "
+                        "Please check your refresh tokens or run 'kiro-cli login'."
+                    )
+                raise last_error
+
             if not self._access_token:
                 raise ValueError("Failed to obtain access token")
-            
+
             return self._access_token
     
     async def force_refresh(self) -> str:
         """
         Forces a token refresh.
-        
+
         Used when receiving a 403 error from the API.
-        
+        Supports token rotation - will try all available tokens on failure.
+
         Returns:
             New access token
+
+        Raises:
+            ValueError: If all tokens fail to refresh
         """
         async with self._lock:
-            await self._refresh_token_request()
+            last_error: Optional[Exception] = None
+            tokens_tried = 0
+            max_attempts = len(self._refresh_tokens) if self._refresh_tokens else 1
+
+            while tokens_tried < max_attempts:
+                tokens_tried += 1
+                try:
+                    await self._refresh_token_request()
+                    return self._access_token
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Force refresh failed for current token: {e}")
+
+                    # Try rotating to next token
+                    if len(self._refresh_tokens) > 1:
+                        next_token = self._rotate_to_next_token()
+                        if next_token:
+                            logger.info(f"Force refresh: trying next token (attempt {tokens_tried + 1}/{max_attempts})")
+                            continue
+                    break
+
+            if last_error:
+                raise last_error
             return self._access_token
     
     @property

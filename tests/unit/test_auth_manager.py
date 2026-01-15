@@ -1993,8 +1993,8 @@ class TestKiroAuthManagerGracefulDegradation:
     @pytest.mark.asyncio
     async def test_get_access_token_non_sqlite_mode_propagates_400_error(self):
         """
-        What it does: Verifies 400 error is propagated in non-SQLite mode.
-        Purpose: Ensure graceful degradation only applies to SQLite mode.
+        What it does: Verifies 400 error raises helpful ValueError in non-SQLite mode.
+        Purpose: Ensure user gets actionable error message when token refresh fails.
         """
         print("Setup: Creating KiroAuthManager WITHOUT sqlite_db...")
         manager = KiroAuthManager(
@@ -2004,10 +2004,10 @@ class TestKiroAuthManagerGracefulDegradation:
         )
         manager._access_token = "expiring_token"
         manager._expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-        
+
         print("Verification: No sqlite_db set...")
         assert manager._sqlite_db is None
-        
+
         print("Setup: Mocking HTTP client to return 400...")
         mock_error_response = AsyncMock()
         mock_error_response.status_code = 400
@@ -2020,17 +2020,17 @@ class TestKiroAuthManagerGracefulDegradation:
                 response=mock_error_response
             )
         )
-        
+
         with patch('kiro.auth.httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
             mock_client.post = AsyncMock(return_value=mock_error_response)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client_class.return_value = mock_client
-            
-            print("Action: Calling get_access_token() (expecting HTTPStatusError)...")
-            with pytest.raises(httpx.HTTPStatusError) as exc_info:
+
+            print("Action: Calling get_access_token() (expecting ValueError with helpful message)...")
+            with pytest.raises(ValueError) as exc_info:
                 await manager.get_access_token()
-            
-            print("Verification: 400 error was propagated (no graceful degradation)...")
-            assert exc_info.value.response.status_code == 400
+
+            print("Verification: ValueError raised with helpful message...")
+            assert "refresh failed" in str(exc_info.value).lower()
