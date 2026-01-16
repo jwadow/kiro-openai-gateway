@@ -11,7 +11,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![Sponsor](https://img.shields.io/badge/💖_Sponsor-開発を支援-ff69b4)](https://app.lava.top/jwadow)
+[![Sponsor](https://img.shields.io/badge/💖_Sponsor-開発を支援-ff69b4)](#-プロジェクトを支援)
 
 *OpenAI または Anthropic 互換のツールで Claude モデルを使用*
 

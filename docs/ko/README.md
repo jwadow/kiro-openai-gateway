@@ -11,7 +11,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![Sponsor](https://img.shields.io/badge/💖_Sponsor-개발_지원-ff69b4)](https://app.lava.top/jwadow)
+[![Sponsor](https://img.shields.io/badge/💖_Sponsor-개발_지원-ff69b4)](#-프로젝트-후원)
 
 *OpenAI 또는 Anthropic 호환 도구로 Claude 모델 사용*
 

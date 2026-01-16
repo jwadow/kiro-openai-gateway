@@ -11,7 +11,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![Sponsor](https://img.shields.io/badge/💖_Sponsor-Geliştirmeyi_Destekle-ff69b4)](https://app.lava.top/jwadow)
+[![Sponsor](https://img.shields.io/badge/💖_Sponsor-Geliştirmeyi_Destekle-ff69b4)](#-projeyi-destekle)
 
 *Claude modellerini OpenAI veya Anthropic uyumlu herhangi bir araçla kullanın*
 
