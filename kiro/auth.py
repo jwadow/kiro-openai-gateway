@@ -134,6 +134,9 @@ class KiroAuthManager:
         self._scopes: Optional[list] = None  # OAuth scopes for AWS SSO OIDC
         self._sso_region: Optional[str] = None  # SSO region for OIDC token refresh (may differ from API region)
         
+        # Kiro Desktop specific fields
+        self._client_id_hash: Optional[str] = None  # clientIdHash from Enterprise Kiro IDE
+        
         self._access_token: Optional[str] = None
         self._expires_at: Optional[datetime] = None
         self._lock = asyncio.Lock()
@@ -271,10 +274,15 @@ class KiroAuthManager:
         - profileArn: Profile ARN
         - region: AWS region
         - expiresAt: Token expiration time (ISO 8601)
+        - clientIdHash: Hash of client ID (Enterprise Kiro IDE)
         
         Additional fields for AWS SSO OIDC (kiro-cli):
         - clientId: OAuth client ID
         - clientSecret: OAuth client secret
+        
+        For Enterprise Kiro IDE:
+        - When clientIdHash is present, automatically loads clientId and clientSecret
+          from ~/.aws/sso/cache/{clientIdHash}.json (device registration file)
         
         Args:
             file_path: Path to JSON file
@@ -302,7 +310,12 @@ class KiroAuthManager:
                 self._api_host = get_kiro_api_host(self._region)
                 self._q_host = get_kiro_q_host(self._region)
             
-            # Load AWS SSO OIDC specific fields
+            # Load clientIdHash and device registration for Enterprise Kiro IDE
+            if 'clientIdHash' in data:
+                self._client_id_hash = data['clientIdHash']
+                self._load_enterprise_device_registration(self._client_id_hash)
+            
+            # Load AWS SSO OIDC specific fields (if directly in credentials file)
             if 'clientId' in data:
                 self._client_id = data['clientId']
             if 'clientSecret' in data:
@@ -324,6 +337,38 @@ class KiroAuthManager:
             
         except Exception as e:
             logger.error(f"Error loading credentials from file: {e}")
+    
+    def _load_enterprise_device_registration(self, client_id_hash: str) -> None:
+        """
+        Loads clientId and clientSecret from Enterprise Kiro IDE device registration file.
+        
+        Enterprise Kiro IDE uses AWS SSO OIDC authentication. Device registration is stored at:
+        ~/.aws/sso/cache/{clientIdHash}.json
+        
+        Args:
+            client_id_hash: Client ID hash used to locate the device registration file
+        """
+        try:
+            device_reg_path = Path.home() / ".aws" / "sso" / "cache" / f"{client_id_hash}.json"
+            
+            if not device_reg_path.exists():
+                logger.warning(f"Enterprise device registration file not found: {device_reg_path}")
+                return
+            
+            with open(device_reg_path, 'r', encoding='utf-8') as f:
+                device_data = json.load(f)
+            
+            if 'clientId' in device_data:
+                self._client_id = device_data['clientId']
+            
+            if 'clientSecret' in device_data:
+                self._client_secret = device_data['clientSecret']
+            
+            logger.info(f"Enterprise device registration loaded from {device_reg_path}")
+            
+        except Exception as e:
+            logger.error(f"Error loading enterprise device registration: {e}")
+    
     
     def _save_credentials_to_file(self) -> None:
         """
@@ -582,44 +627,37 @@ class KiroAuthManager:
         
         logger.info("Refreshing Kiro token via AWS SSO OIDC...")
         
-        # AWS SSO OIDC uses form-urlencoded data
         # Use SSO region for OIDC endpoint (may differ from API region)
         sso_region = self._sso_region or self._region
         url = get_aws_sso_oidc_url(sso_region)
-        data = {
-            "grant_type": "refresh_token",
-            "client_id": self._client_id,
-            "client_secret": self._client_secret,
-            "refresh_token": self._refresh_token,
-        }
-        
-        # Note: scope parameter is NOT sent during refresh per OAuth 2.0 RFC 6749 Section 6
-        # AWS SSO OIDC uses the originally granted scopes automatically
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-        
-        # Log request details (without secrets) for debugging
-        logger.debug(f"AWS SSO OIDC refresh request: url={url}, sso_region={sso_region}, "
-                     f"api_region={self._region}, client_id={self._client_id[:8]}...")
         
         async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(url, data=data, headers=headers)
+            # Enterprise Kiro IDE (JSON file with clientIdHash) uses JSON format
+            # kiro-cli (SQLite) uses form-urlencoded format
+            if self._client_id_hash:
+                # Enterprise Kiro IDE: JSON format with camelCase field names
+                json_payload = {
+                    "clientId": self._client_id,
+                    "clientSecret": self._client_secret,
+                    "grantType": "refresh_token",
+                    "refreshToken": self._refresh_token,
+                }
+                response = await client.post(url, json=json_payload, headers={"Content-Type": "application/json"})
+            else:
+                # kiro-cli: form-urlencoded format with snake_case field names
+                form_data = {
+                    "grant_type": "refresh_token",
+                    "client_id": self._client_id,
+                    "client_secret": self._client_secret,
+                    "refresh_token": self._refresh_token,
+                }
+                response = await client.post(url, data=form_data, headers={"Content-Type": "application/x-www-form-urlencoded"})
             
             # Log response details for debugging (especially on errors)
             if response.status_code != 200:
                 error_body = response.text
                 logger.error(f"AWS SSO OIDC refresh failed: status={response.status_code}, "
                              f"body={error_body}")
-                # Try to parse AWS error for more details
-                try:
-                    error_json = response.json()
-                    error_code = error_json.get("error", "unknown")
-                    error_desc = error_json.get("error_description", "no description")
-                    logger.error(f"AWS SSO OIDC error details: error={error_code}, "
-                                 f"description={error_desc}")
-                except Exception:
-                    pass  # Body wasn't JSON, already logged as text
                 response.raise_for_status()
             
             result = response.json()
