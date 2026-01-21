@@ -71,6 +71,7 @@ def normalize_model_name(name: str) -> str:
     4. claude-sonnet-4-20250514 → claude-sonnet-4 (strip date, no minor)
     5. claude-3-7-sonnet → claude-3.7-sonnet (legacy format normalization)
     6. claude-3-7-sonnet-20250219 → claude-3.7-sonnet (legacy + strip date)
+    7. claude-4.5-opus-high → claude-opus-4.5 (inverted format with suffix)
     
     Args:
         name: External model name from client
@@ -93,6 +94,10 @@ def normalize_model_name(name: str) -> str:
         'claude-3.7-sonnet'
         >>> normalize_model_name("claude-3-7-sonnet-20250219")
         'claude-3.7-sonnet'
+        >>> normalize_model_name("claude-4.5-opus-high")
+        'claude-opus-4.5'
+        >>> normalize_model_name("claude-4.5-sonnet-low")
+        'claude-sonnet-4.5'
         >>> normalize_model_name("auto")
         'auto'
     """
@@ -139,6 +144,19 @@ def normalize_model_name(name: str) -> str:
     match = re.match(dot_with_date_pattern, name_lower)
     if match:
         return match.group(1)
+    
+    # Pattern 5: Inverted format with suffix - claude-{major}.{minor}-{family}-{suffix}
+    # Matches: claude-4.5-opus-high, claude-4.5-sonnet-low, claude-4.5-opus-high-thinking
+    # Convert to: claude-{family}-{major}.{minor}
+    # Groups: (4), (5), (opus), any suffix
+    # NOTE: This pattern REQUIRES a suffix to avoid matching already-normalized formats like claude-3.7-sonnet
+    inverted_with_suffix_pattern = r'^claude-(\d+)\.(\d+)-(haiku|sonnet|opus)-(.+)$'
+    match = re.match(inverted_with_suffix_pattern, name_lower)
+    if match:
+        major = match.group(1)   # 4
+        minor = match.group(2)   # 5
+        family = match.group(3)  # opus
+        return f"claude-{family}-{major}.{minor}"  # claude-opus-4.5
     
     # No transformation needed - return as-is (preserving original case for passthrough)
     return name

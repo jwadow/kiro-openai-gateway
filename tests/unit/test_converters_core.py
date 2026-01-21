@@ -1269,21 +1269,23 @@ class TestEnsureAssistantBeforeToolResults:
         ]
         
         print("Action: Processing messages...")
-        result, stripped = ensure_assistant_before_tool_results(messages)
+        result, converted = ensure_assistant_before_tool_results(messages)
         
         print(f"Result: {result}")
         print(f"Comparing length: Expected 2, Got {len(result)}")
         assert len(result) == 2
         
-        print("Checking that orphaned tool_results are stripped...")
+        print("Checking that orphaned tool_results are converted to text...")
         assert result[0].tool_results is None
-        assert result[0].content == ""  # Content preserved
+        # Content now contains the tool result as text
+        assert "[Tool Result (call_orphan)]" in result[0].content
+        assert "Orphaned result" in result[0].content
         assert result[1].content == "Continue the conversation"
-        assert stripped is True
+        assert converted is True
     
     def test_strips_tool_results_after_assistant_without_tool_calls(self):
         """
-        What it does: Verifies tool_results are stripped when preceding assistant has no tool_calls.
+        What it does: Verifies tool_results are converted to text when preceding assistant has no tool_calls.
         Purpose: Ensure tool_results require assistant with tool_calls, not just any assistant.
         """
         print("Setup: Assistant without tool_calls followed by user with tool_results...")
@@ -1302,16 +1304,18 @@ class TestEnsureAssistantBeforeToolResults:
         ]
         
         print("Action: Processing messages...")
-        result, stripped = ensure_assistant_before_tool_results(messages)
+        result, converted = ensure_assistant_before_tool_results(messages)
         
         print(f"Result: {result}")
-        print("Checking that tool_results are stripped...")
+        print("Checking that tool_results are converted to text...")
         assert result[2].tool_results is None
-        assert stripped is True
+        assert "[Tool Result (call_123)]" in result[2].content
+        assert "Result" in result[2].content
+        assert converted is True
     
     def test_strips_tool_results_after_user_message(self):
         """
-        What it does: Verifies tool_results are stripped when preceded by user message.
+        What it does: Verifies tool_results are converted to text when preceded by user message.
         Purpose: Ensure tool_results require assistant, not user.
         """
         print("Setup: User message followed by user with tool_results...")
@@ -1329,17 +1333,18 @@ class TestEnsureAssistantBeforeToolResults:
         ]
         
         print("Action: Processing messages...")
-        result, stripped = ensure_assistant_before_tool_results(messages)
+        result, converted = ensure_assistant_before_tool_results(messages)
         
         print(f"Result: {result}")
-        print("Checking that tool_results are stripped...")
+        print("Checking that tool_results are converted to text...")
         assert result[1].tool_results is None
-        assert stripped is True
+        assert "[Tool Result (call_123)]" in result[1].content
+        assert converted is True
     
     def test_preserves_content_when_stripping_tool_results(self):
         """
-        What it does: Verifies message content is preserved when tool_results are stripped.
-        Purpose: Ensure only tool_results are removed, not the entire message.
+        What it does: Verifies message content is preserved and tool_results appended as text.
+        Purpose: Ensure original content is kept and tool_results are appended.
         """
         print("Setup: Message with both content and orphaned tool_results...")
         messages = [
@@ -1355,18 +1360,20 @@ class TestEnsureAssistantBeforeToolResults:
         ]
         
         print("Action: Processing messages...")
-        result, stripped = ensure_assistant_before_tool_results(messages)
+        result, converted = ensure_assistant_before_tool_results(messages)
         
         print(f"Result: {result}")
-        print("Checking that content is preserved...")
-        assert result[0].content == "Here is some context"
+        print("Checking that content is preserved and tool_results appended...")
+        assert "Here is some context" in result[0].content
+        assert "[Tool Result (call_123)]" in result[0].content
+        assert "Result" in result[0].content
         assert result[0].tool_results is None
-        assert stripped is True
+        assert converted is True
     
     def test_preserves_tool_calls_when_stripping_tool_results(self):
         """
-        What it does: Verifies tool_calls are preserved when tool_results are stripped.
-        Purpose: Ensure only tool_results are removed, tool_calls stay.
+        What it does: Verifies tool_calls are preserved when tool_results are converted to text.
+        Purpose: Ensure only tool_results are converted, tool_calls stay.
         """
         print("Setup: Message with tool_calls and orphaned tool_results...")
         messages = [
@@ -1387,19 +1394,20 @@ class TestEnsureAssistantBeforeToolResults:
         ]
         
         print("Action: Processing messages...")
-        result, stripped = ensure_assistant_before_tool_results(messages)
+        result, converted = ensure_assistant_before_tool_results(messages)
         
         print(f"Result: {result}")
         print("Checking that tool_calls are preserved...")
         assert result[0].tool_calls is not None
         assert len(result[0].tool_calls) == 1
         assert result[0].tool_results is None
-        assert stripped is True
+        assert "[Tool Result (call_old)]" in result[0].content
+        assert converted is True
     
     def test_handles_multiple_orphaned_tool_results(self):
         """
-        What it does: Verifies multiple orphaned tool_results are all stripped.
-        Purpose: Ensure all tool_results in the list are removed.
+        What it does: Verifies multiple orphaned tool_results are all converted to text.
+        Purpose: Ensure all tool_results in the list are converted.
         """
         print("Setup: Message with multiple orphaned tool_results...")
         messages = [
@@ -1415,12 +1423,18 @@ class TestEnsureAssistantBeforeToolResults:
         ]
         
         print("Action: Processing messages...")
-        result, stripped = ensure_assistant_before_tool_results(messages)
+        result, converted = ensure_assistant_before_tool_results(messages)
         
         print(f"Result: {result}")
-        print("Checking that all tool_results are stripped...")
+        print("Checking that all tool_results are converted to text...")
         assert result[0].tool_results is None
-        assert stripped is True
+        assert "[Tool Result (call_1)]" in result[0].content
+        assert "[Tool Result (call_2)]" in result[0].content
+        assert "[Tool Result (call_3)]" in result[0].content
+        assert "Result 1" in result[0].content
+        assert "Result 2" in result[0].content
+        assert "Result 3" in result[0].content
+        assert converted is True
     
     def test_mixed_valid_and_orphaned_tool_results(self):
         """

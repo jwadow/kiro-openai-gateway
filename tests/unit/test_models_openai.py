@@ -465,19 +465,44 @@ class TestTool:
         print(f"Comparing type: Expected 'function', Got '{tool.type}'")
         assert tool.type == "function"
     
-    def test_requires_function(self):
+    def test_function_is_optional_for_flat_format(self):
         """
-        What it does: Verifies that function is required.
-        Purpose: Ensure validation fails without function.
+        What it does: Verifies that function is optional (for flat format compatibility).
+        Purpose: Ensure Tool can be created without function field for Cursor-style flat format.
         """
-        print("Setup: Attempting to create Tool without function...")
+        print("Setup: Creating Tool without function (flat format)...")
         
-        print("Action: Creating model (should raise ValidationError)...")
-        with pytest.raises(ValidationError) as exc_info:
-            Tool(type="function")
+        print("Action: Creating model with flat format fields...")
+        tool = Tool(
+            type="function",
+            name="test_tool",
+            description="A test tool",
+            input_schema={"type": "object", "properties": {}}
+        )
         
-        print(f"ValidationError raised: {exc_info.value}")
-        assert "function" in str(exc_info.value)
+        print(f"Tool created: name={tool.name}, description={tool.description}")
+        assert tool.name == "test_tool"
+        assert tool.description == "A test tool"
+        assert tool.function is None
+    
+    def test_standard_format_still_works(self):
+        """
+        What it does: Verifies that standard OpenAI format still works.
+        Purpose: Ensure backward compatibility with standard format.
+        """
+        print("Setup: Creating Tool with standard format...")
+        
+        tool = Tool(
+            type="function",
+            function=ToolFunction(
+                name="standard_tool",
+                description="A standard tool"
+            )
+        )
+        
+        print(f"Tool created: function.name={tool.function.name}")
+        assert tool.function.name == "standard_tool"
+        assert tool.name is None
 
 
 # ==================================================================================================

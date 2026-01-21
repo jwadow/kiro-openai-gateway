@@ -207,6 +207,10 @@ def convert_openai_tools_to_unified(tools: Optional[List[Tool]]) -> Optional[Lis
     """
     Converts OpenAI tools to unified format.
     
+    Supports two formats:
+    1. Standard OpenAI format: {"type": "function", "function": {"name": "...", ...}}
+    2. Flat format (Cursor-style): {"name": "...", "description": "...", "input_schema": {...}}
+    
     Args:
         tools: List of OpenAI Tool objects
     
@@ -221,11 +225,24 @@ def convert_openai_tools_to_unified(tools: Optional[List[Tool]]) -> Optional[Lis
         if tool.type != "function":
             continue
         
-        unified_tools.append(UnifiedTool(
-            name=tool.function.name,
-            description=tool.function.description,
-            input_schema=tool.function.parameters
-        ))
+        # Standard OpenAI format (function field) takes priority
+        if tool.function is not None:
+            unified_tools.append(UnifiedTool(
+                name=tool.function.name,
+                description=tool.function.description,
+                input_schema=tool.function.parameters
+            ))
+        # Flat format compatibility (Cursor-style)
+        elif tool.name is not None:
+            unified_tools.append(UnifiedTool(
+                name=tool.name,
+                description=tool.description,
+                input_schema=tool.input_schema
+            ))
+        # Skip invalid tools
+        else:
+            logger.warning(f"Skipping invalid tool: no function or name field found")
+            continue
     
     return unified_tools if unified_tools else None
 

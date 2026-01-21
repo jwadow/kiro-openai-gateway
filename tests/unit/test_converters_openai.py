@@ -459,6 +459,74 @@ class TestConvertOpenAIToolsToUnified:
         assert result[0].name == "tool1"
         assert result[1].name == "tool2"
         assert result[2].name == "tool3"
+    
+    def test_converts_flat_format_tool(self):
+        """
+        What it does: Verifies conversion of flat format tool (Cursor-style).
+        Purpose: Ensure flat format tools are converted correctly.
+        """
+        print("Setup: Flat format tool (Cursor-style)...")
+        tools = [Tool(
+            type="function",
+            name="Shell",
+            description="Executes a shell command",
+            input_schema={"type": "object", "properties": {"command": {"type": "string"}}}
+        )]
+        
+        print("Action: Converting tools...")
+        result = convert_openai_tools_to_unified(tools)
+        
+        print(f"Result: {result}")
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].name == "Shell"
+        assert result[0].description == "Executes a shell command"
+        assert result[0].input_schema == {"type": "object", "properties": {"command": {"type": "string"}}}
+    
+    def test_converts_mixed_format_tools(self):
+        """
+        What it does: Verifies conversion of mixed format tools.
+        Purpose: Ensure both standard and flat format tools work together.
+        """
+        print("Setup: Mixed format tools...")
+        tools = [
+            # Standard OpenAI format
+            Tool(type="function", function=ToolFunction(name="standard_tool", description="Standard", parameters={})),
+            # Flat format (Cursor-style)
+            Tool(type="function", name="flat_tool", description="Flat", input_schema={"type": "object"})
+        ]
+        
+        print("Action: Converting tools...")
+        result = convert_openai_tools_to_unified(tools)
+        
+        print(f"Result: {result}")
+        assert len(result) == 2
+        assert result[0].name == "standard_tool"
+        assert result[1].name == "flat_tool"
+    
+    def test_standard_format_takes_priority(self):
+        """
+        What it does: Verifies that standard format takes priority over flat format.
+        Purpose: Ensure function field is used when both formats are present.
+        """
+        print("Setup: Tool with both formats (edge case)...")
+        tools = [Tool(
+            type="function",
+            function=ToolFunction(name="from_function", description="From function", parameters={}),
+            name="from_flat",
+            description="From flat",
+            input_schema={}
+        )]
+        
+        print("Action: Converting tools...")
+        result = convert_openai_tools_to_unified(tools)
+        
+        print(f"Result: {result}")
+        assert result is not None
+        assert len(result) == 1
+        # Standard format takes priority
+        assert result[0].name == "from_function"
+        assert result[0].description == "From function"
 
 
 # ==================================================================================================
