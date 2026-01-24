@@ -93,6 +93,137 @@ The server will be available at `http://localhost:8000`
 
 ---
 
+## 🐳 Docker Deployment
+
+### Quick Start with Docker
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/Jwadow/kiro-gateway.git
+cd kiro-gateway
+
+# 2. Configure credentials (copy and edit .env)
+cp .env.example .env
+# Edit .env with your credentials
+
+# 3. Run with docker-compose (recommended)
+docker-compose up -d
+
+# 4. Check logs
+docker-compose logs -f
+
+# 5. Test the server
+curl http://localhost:8000/health
+```
+
+### Docker Run Examples
+
+<details>
+<summary>🔹 Using Environment Variables</summary>
+
+```bash
+docker run -d \
+  -p 8000:8000 \
+  -e PROXY_API_KEY="my-super-secret-password-123" \
+  -e REFRESH_TOKEN="your_refresh_token" \
+  -e PROFILE_ARN="arn:aws:codewhisperer:us-east-1:..." \
+  --name kiro-gateway \
+  ghcr.io/jwadow/kiro-gateway:latest
+```
+
+</details>
+
+<details>
+<summary>🔹 Using Credentials File (Kiro IDE)</summary>
+
+```bash
+docker run -d \
+  -p 8000:8000 \
+  -v ~/.aws/sso/cache:/home/kiro/.aws/sso/cache:ro \
+  -e KIRO_CREDS_FILE=/home/kiro/.aws/sso/cache/kiro-auth-token.json \
+  -e PROXY_API_KEY="my-super-secret-password-123" \
+  --name kiro-gateway \
+  ghcr.io/jwadow/kiro-gateway:latest
+```
+
+</details>
+
+<details>
+<summary>🔹 Using kiro-cli Database</summary>
+
+```bash
+docker run -d \
+  -p 8000:8000 \
+  -v ~/.local/share/kiro-cli:/home/kiro/.local/share/kiro-cli:ro \
+  -e KIRO_CLI_DB_FILE=/home/kiro/.local/share/kiro-cli/data.sqlite3 \
+  -e PROXY_API_KEY="my-super-secret-password-123" \
+  --name kiro-gateway \
+  ghcr.io/jwadow/kiro-gateway:latest
+```
+
+</details>
+
+<details>
+<summary>🔹 Using .env File</summary>
+
+```bash
+docker run -d \
+  -p 8000:8000 \
+  --env-file .env \
+  --name kiro-gateway \
+  ghcr.io/jwadow/kiro-gateway:latest
+```
+
+</details>
+
+### Docker Compose Configuration
+
+The `docker-compose.yml` file supports all authentication methods. Uncomment the volume mounts you need:
+
+```yaml
+volumes:
+  # For Kiro IDE credentials
+  - ~/.aws/sso/cache:/home/kiro/.aws/sso/cache:ro
+  
+  # For kiro-cli database
+  - ~/.local/share/kiro-cli:/home/kiro/.local/share/kiro-cli:ro
+  
+  # For debug logs
+  - ./debug_logs:/app/debug_logs
+```
+
+### Building from Source
+
+```bash
+# Build image
+docker build -t kiro-gateway .
+
+# Run your custom image
+docker run -d -p 8000:8000 --env-file .env kiro-gateway
+```
+
+### Docker Management
+
+```bash
+# View logs
+docker-compose logs -f
+
+# Restart service
+docker-compose restart
+
+# Stop service
+docker-compose down
+
+# Update to latest version
+docker-compose pull
+docker-compose up -d
+
+# Check container health
+docker ps
+```
+
+---
+
 ## ⚙️ Configuration
 
 ### Option 1: JSON Credentials File (Kiro IDE / Enterprise)
