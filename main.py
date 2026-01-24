@@ -204,55 +204,61 @@ def validate_configuration() -> None:
     Validates that required configuration is present.
     
     Checks:
-    - .env file exists
-    - Either REFRESH_TOKEN or KIRO_CREDS_FILE is configured
+    - Either REFRESH_TOKEN, KIRO_CREDS_FILE, or KIRO_CLI_DB_FILE is configured
+    - Supports both .env file (local) and environment variables (Docker)
     
     Raises:
         SystemExit: If critical configuration is missing
     """
     errors = []
     
-    # Check if .env file exists
+    # Check if .env file exists (optional - can use environment variables)
     env_file = Path(".env")
-    env_example = Path(".env.example")
     
-    if not env_file.exists():
-        errors.append(
-            ".env file not found!\n"
-            "\n"
-            "To get started:\n"
-            "1. Create .env or rename from .env.example:\n"
-            "   cp .env.example .env\n"
-            "\n"
-            "2. Edit .env and configure your credentials:\n"
-            "   2.1. Set you super-secret password as PROXY_API_KEY\n"
-            "   2.2. Set your Kiro credentials:\n"
-            "      - 1 way: KIRO_CREDS_FILE to your Kiro credentials JSON file\n"
-            "      - 2 way: REFRESH_TOKEN from Kiro IDE traffic\n"
-            "\n"
-            "See README.md for detailed instructions."
-        )
-    else:
-        # .env exists, check for credentials
-        has_refresh_token = bool(REFRESH_TOKEN)
-        has_creds_file = bool(KIRO_CREDS_FILE)
-        has_cli_db = bool(KIRO_CLI_DB_FILE)
-        
-        # Check if creds file actually exists
-        if KIRO_CREDS_FILE:
-            creds_path = Path(KIRO_CREDS_FILE).expanduser()
-            if not creds_path.exists():
-                has_creds_file = False
-                logger.warning(f"KIRO_CREDS_FILE not found: {KIRO_CREDS_FILE}")
-        
-        # Check if CLI database file actually exists
-        if KIRO_CLI_DB_FILE:
-            cli_db_path = Path(KIRO_CLI_DB_FILE).expanduser()
-            if not cli_db_path.exists():
-                has_cli_db = False
-                logger.warning(f"KIRO_CLI_DB_FILE not found: {KIRO_CLI_DB_FILE}")
-        
-        if not has_refresh_token and not has_creds_file and not has_cli_db:
+    # Check for credentials (from .env or environment variables)
+    has_refresh_token = bool(REFRESH_TOKEN)
+    has_creds_file = bool(KIRO_CREDS_FILE)
+    has_cli_db = bool(KIRO_CLI_DB_FILE)
+    
+    # Check if creds file actually exists
+    if KIRO_CREDS_FILE:
+        creds_path = Path(KIRO_CREDS_FILE).expanduser()
+        if not creds_path.exists():
+            has_creds_file = False
+            logger.warning(f"KIRO_CREDS_FILE not found: {KIRO_CREDS_FILE}")
+    
+    # Check if CLI database file actually exists
+    if KIRO_CLI_DB_FILE:
+        cli_db_path = Path(KIRO_CLI_DB_FILE).expanduser()
+        if not cli_db_path.exists():
+            has_cli_db = False
+            logger.warning(f"KIRO_CLI_DB_FILE not found: {KIRO_CLI_DB_FILE}")
+    
+    # If no credentials found, show helpful error
+    if not has_refresh_token and not has_creds_file and not has_cli_db:
+        if not env_file.exists():
+            # No .env file and no environment variables
+            errors.append(
+                "No Kiro credentials configured!\n"
+                "\n"
+                "To get started:\n"
+                "1. Create .env file:\n"
+                "   cp .env.example .env\n"
+                "\n"
+                "2. Edit .env and configure your credentials:\n"
+                "   2.1. Set you super-secret password as PROXY_API_KEY\n"
+                "   2.2. Set your Kiro credentials:\n"
+                "      - Option 1: KIRO_CREDS_FILE to your Kiro credentials JSON file\n"
+                "      - Option 2: REFRESH_TOKEN from Kiro IDE traffic\n"
+                "      - Option 3: KIRO_CLI_DB_FILE to kiro-cli SQLite database\n"
+                "\n"
+                "Or use environment variables (for Docker):\n"
+                "   docker run -e PROXY_API_KEY=\"...\" -e REFRESH_TOKEN=\"...\" ...\n"
+                "\n"
+                "See README.md for detailed instructions."
+            )
+        else:
+            # .env exists but no credentials configured
             errors.append(
                 "No Kiro credentials configured!\n"
                 "\n"
