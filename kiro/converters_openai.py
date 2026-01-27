@@ -51,96 +51,87 @@ from kiro.converters_core import (
 # OpenAI-specific Message Processing
 # ==================================================================================================
 
-
 def _extract_tool_results_from_openai(content: Any) -> List[Dict[str, Any]]:
     """
     Extracts tool results from OpenAI message content.
-
+    
     Args:
         content: Message content (can be a list with tool_result blocks)
-
+    
     Returns:
         List of tool results in unified format for UnifiedMessage
     """
     tool_results = []
-
+    
     if isinstance(content, list):
         for item in content:
             if isinstance(item, dict) and item.get("type") == "tool_result":
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": item.get("tool_use_id", ""),
-                        "content": extract_text_content(item.get("content", ""))
-                        or "(empty result)",
-                    }
-                )
-
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": item.get("tool_use_id", ""),
+                    "content": extract_text_content(item.get("content", "")) or "(empty result)"
+                })
+    
     return tool_results
 
 
 def _extract_tool_calls_from_openai(msg: ChatMessage) -> List[Dict[str, Any]]:
     """
     Extracts tool calls from OpenAI assistant message.
-
+    
     Args:
         msg: OpenAI ChatMessage
-
+    
     Returns:
         List of tool calls in unified format
     """
     tool_calls = []
-
+    
     if msg.tool_calls:
         for tc in msg.tool_calls:
             if isinstance(tc, dict):
-                tool_calls.append(
-                    {
-                        "id": tc.get("id", ""),
-                        "type": "function",
-                        "function": {
-                            "name": tc.get("function", {}).get("name", ""),
-                            "arguments": tc.get("function", {}).get("arguments", "{}"),
-                        },
+                tool_calls.append({
+                    "id": tc.get("id", ""),
+                    "type": "function",
+                    "function": {
+                        "name": tc.get("function", {}).get("name", ""),
+                        "arguments": tc.get("function", {}).get("arguments", "{}")
                     }
-                )
-
+                })
+    
     return tool_calls
 
 
-def convert_openai_messages_to_unified(
-    messages: List[ChatMessage],
-) -> Tuple[str, List[UnifiedMessage]]:
+def convert_openai_messages_to_unified(messages: List[ChatMessage]) -> Tuple[str, List[UnifiedMessage]]:
     """
     Converts OpenAI messages to unified format.
-
+    
     Handles:
     - System messages (extracted as system prompt)
     - Tool messages (converted to user messages with tool_results)
     - Tool calls in assistant messages
-
+    
     Args:
         messages: List of OpenAI ChatMessage objects
-
+    
     Returns:
         Tuple of (system_prompt, unified_messages)
     """
     # Extract system prompt
     system_prompt = ""
     non_system_messages = []
-
+    
     for msg in messages:
         if msg.role == "system":
             system_prompt += extract_text_content(msg.content) + "\n"
         else:
             non_system_messages.append(msg)
-
+    
     system_prompt = system_prompt.strip()
-
+    
     # Process tool messages - convert to user messages with tool_results
     processed = []
     pending_tool_results = []
-    pending_tool_images = []  # Accumulate images from tool results
     total_tool_calls = 0
     total_tool_results = 0
     total_images = 0
@@ -151,29 +142,21 @@ def convert_openai_messages_to_unified(
             tool_result = {
                 "type": "tool_result",
                 "tool_use_id": msg.tool_call_id or "",
-                "content": extract_text_content(msg.content) or "(empty result)",
+                "content": extract_text_content(msg.content) or "(empty result)"
             }
             pending_tool_results.append(tool_result)
             total_tool_results += 1
-
-            # Extract images from tool message content
-            tool_images = extract_images_from_content(msg.content)
-            if tool_images:
-                pending_tool_images.extend(tool_images)
-                total_images += len(tool_images)
         else:
             # If there are accumulated tool results, create user message with them
             if pending_tool_results:
                 unified_msg = UnifiedMessage(
                     role="user",
                     content="",
-                    tool_results=pending_tool_results.copy(),
-                    images=pending_tool_images.copy() if pending_tool_images else None,
+                    tool_results=pending_tool_results.copy()
                 )
                 processed.append(unified_msg)
                 pending_tool_results.clear()
-                pending_tool_images.clear()
-
+            
             # Convert regular message
             tool_calls = None
             tool_results = None
@@ -197,77 +180,70 @@ def convert_openai_messages_to_unified(
                 content=extract_text_content(msg.content),
                 tool_calls=tool_calls,
                 tool_results=tool_results,
-                images=images,
+                images=images
             )
             processed.append(unified_msg)
-
+    
     # If tool results remain at the end
     if pending_tool_results:
         unified_msg = UnifiedMessage(
             role="user",
             content="",
-            tool_results=pending_tool_results.copy(),
-            images=pending_tool_images.copy() if pending_tool_images else None,
+            tool_results=pending_tool_results.copy()
         )
         processed.append(unified_msg)
-
+    
     # Log summary if any tool content or images were found
     if total_tool_calls > 0 or total_tool_results > 0 or total_images > 0:
         logger.debug(
             f"Converted {len(messages)} OpenAI messages: "
             f"{total_tool_calls} tool_calls, {total_tool_results} tool_results, {total_images} images"
         )
-
+    
     return system_prompt, processed
 
 
-def convert_openai_tools_to_unified(
-    tools: Optional[List[Tool]],
-) -> Optional[List[UnifiedTool]]:
+def convert_openai_tools_to_unified(tools: Optional[List[Tool]]) -> Optional[List[UnifiedTool]]:
     """
     Converts OpenAI tools to unified format.
-
+    
     Supports two formats:
     1. Standard OpenAI format: {"type": "function", "function": {"name": "...", ...}}
     2. Flat format (Cursor-style): {"name": "...", "description": "...", "input_schema": {...}}
-
+    
     Args:
         tools: List of OpenAI Tool objects
-
+    
     Returns:
         List of UnifiedTool objects, or None if no tools
     """
     if not tools:
         return None
-
+    
     unified_tools = []
     for tool in tools:
         if tool.type != "function":
             continue
-
+        
         # Standard OpenAI format (function field) takes priority
         if tool.function is not None:
-            unified_tools.append(
-                UnifiedTool(
-                    name=tool.function.name,
-                    description=tool.function.description,
-                    input_schema=tool.function.parameters,
-                )
-            )
+            unified_tools.append(UnifiedTool(
+                name=tool.function.name,
+                description=tool.function.description,
+                input_schema=tool.function.parameters
+            ))
         # Flat format compatibility (Cursor-style)
         elif tool.name is not None:
-            unified_tools.append(
-                UnifiedTool(
-                    name=tool.name,
-                    description=tool.description,
-                    input_schema=tool.input_schema,
-                )
-            )
+            unified_tools.append(UnifiedTool(
+                name=tool.name,
+                description=tool.description,
+                input_schema=tool.input_schema
+            ))
         # Skip invalid tools
         else:
             logger.warning(f"Skipping invalid tool: no function or name field found")
             continue
-
+    
     return unified_tools if unified_tools else None
 
 
@@ -275,45 +251,44 @@ def convert_openai_tools_to_unified(
 # Main Entry Point
 # ==================================================================================================
 
-
 def build_kiro_payload(
-    request_data: ChatCompletionRequest, conversation_id: str, profile_arn: str
+    request_data: ChatCompletionRequest,
+    conversation_id: str,
+    profile_arn: str
 ) -> dict:
     """
     Builds complete payload for Kiro API from OpenAI request.
-
+    
     This is the main entry point for OpenAI → Kiro conversion.
     Uses the core build_kiro_payload function with OpenAI-specific adapters.
-
+    
     Args:
         request_data: Request in OpenAI format
         conversation_id: Unique conversation ID
         profile_arn: AWS CodeWhisperer profile ARN
-
+    
     Returns:
         Payload dictionary for POST request to Kiro API
-
+    
     Raises:
         ValueError: If there are no messages to send
     """
     # Convert messages to unified format
-    system_prompt, unified_messages = convert_openai_messages_to_unified(
-        request_data.messages
-    )
-
+    system_prompt, unified_messages = convert_openai_messages_to_unified(request_data.messages)
+    
     # Convert tools to unified format
     unified_tools = convert_openai_tools_to_unified(request_data.tools)
-
+    
     # Get model ID for Kiro API (normalizes + resolves hidden models)
     # Pass-through principle: we normalize and send to Kiro, Kiro decides if valid
     model_id = get_model_id_for_kiro(request_data.model, HIDDEN_MODELS)
-
+    
     logger.debug(
         f"Converting OpenAI request: model={request_data.model} -> {model_id}, "
         f"messages={len(unified_messages)}, tools={len(unified_tools) if unified_tools else 0}, "
         f"system_prompt_length={len(system_prompt)}"
     )
-
+    
     # Use core function to build payload
     result = core_build_kiro_payload(
         messages=unified_messages,
@@ -322,7 +297,7 @@ def build_kiro_payload(
         tools=unified_tools,
         conversation_id=conversation_id,
         profile_arn=profile_arn,
-        inject_thinking=True,
+        inject_thinking=True
     )
-
+    
     return result.payload
