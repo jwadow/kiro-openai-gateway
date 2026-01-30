@@ -204,6 +204,47 @@ HIDDEN_MODELS: Dict[str, str] = {
 }
 
 # ==================================================================================================
+# Model Aliases Configuration
+# ==================================================================================================
+
+# Model aliases - custom names that map to real model IDs.
+# This feature allows creating alternative names for models to avoid namespace conflicts
+# with IDE-specific model names (e.g., Cursor's "auto" model).
+#
+# Format: {"alias_name": "real_model_id"}
+# - alias_name: The name that will appear in /v1/models and can be used in requests
+# - real_model_id: The actual model ID that will be sent to Kiro API
+#
+# Use cases:
+# - Avoid conflicts with IDE-specific model names (e.g., Cursor's "auto")
+# - Create user-friendly shortcuts (e.g., "my-opus" → "claude-opus-4.5")
+# - Support legacy model names from other providers
+#
+# Example:
+#   MODEL_ALIASES = {
+#       "auto-kiro": "auto",
+#       "my-opus": "claude-opus-4.5",
+#       "gpt-5": "claude-sonnet-4.5"
+#   }
+#
+# Default: {"auto-kiro": "auto"} to avoid Cursor IDE conflict
+MODEL_ALIASES: Dict[str, str] = {
+    "auto-kiro": "auto",  # Default alias to avoid Cursor's "auto" model conflict
+}
+
+# Models to hide from /v1/models endpoint.
+# These models still work when requested directly, but are not shown in the model list.
+# This is useful when you want to show only aliases instead of original model names.
+#
+# Use case: Hide "auto" from list to show only "auto-kiro" alias, avoiding confusion.
+#
+# Example:
+#   HIDDEN_FROM_LIST = ["auto", "claude-old-model"]
+#
+# Default: ["auto"] to show only "auto-kiro" alias
+HIDDEN_FROM_LIST: List[str] = ["auto"]
+
+# ==================================================================================================
 # Fallback Models Configuration (DNS Failure Recovery)
 # ==================================================================================================
 

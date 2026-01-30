@@ -69,6 +69,8 @@ from kiro.config import (
     DEFAULT_SERVER_PORT,
     STREAMING_READ_TIMEOUT,
     HIDDEN_MODELS,
+    MODEL_ALIASES,
+    HIDDEN_FROM_LIST,
     FALLBACK_MODELS,
     VPN_PROXY_URL,
     _warn_deprecated_debug_setting,
@@ -401,12 +403,20 @@ async def lifespan(app: FastAPI):
     all_models = app.state.model_cache.get_all_model_ids()
     logger.info(f"Model cache ready: {len(all_models)} models total")
     
-    # Create model resolver (uses cache + hidden models for resolution)
+    # Create model resolver (uses cache + hidden models + aliases for resolution)
     app.state.model_resolver = ModelResolver(
         cache=app.state.model_cache,
-        hidden_models=HIDDEN_MODELS
+        hidden_models=HIDDEN_MODELS,
+        aliases=MODEL_ALIASES,
+        hidden_from_list=HIDDEN_FROM_LIST
     )
     logger.info("Model resolver initialized")
+    
+    # Log alias configuration if any
+    if MODEL_ALIASES:
+        logger.debug(f"Model aliases configured: {list(MODEL_ALIASES.keys())}")
+    if HIDDEN_FROM_LIST:
+        logger.debug(f"Models hidden from list: {HIDDEN_FROM_LIST}")
     
     yield
     

@@ -225,6 +225,7 @@ class ModelResolver:
     Kiro API is the final arbiter of what models exist.
     
     Resolution layers:
+    0. Resolve aliases (custom name mappings)
     1. Normalize name (dashes→dots, strip dates)
     2. Check dynamic cache (from /ListAvailableModels)
     3. Check hidden models (manual config)
@@ -233,12 +234,14 @@ class ModelResolver:
     Attributes:
         cache: ModelInfoCache instance for dynamic model lookup
         hidden_models: Dict mapping display names to internal Kiro IDs
+        aliases: Dict mapping alias names to real model IDs
+        hidden_from_list: Set of model IDs to hide from /v1/models endpoint
     
     Example:
-        >>> resolver = ModelResolver(cache, hidden_models)
-        >>> resolution = resolver.resolve("claude-haiku-4-5-20251001")
+        >>> resolver = ModelResolver(cache, hidden_models, aliases={"auto-kiro": "auto"})
+        >>> resolution = resolver.resolve("auto-kiro")
         >>> resolution.internal_id
-        'claude-haiku-4.5'
+        'auto'
         >>> resolution.source
         'cache'
     """
@@ -246,7 +249,9 @@ class ModelResolver:
     def __init__(
         self,
         cache: ModelInfoCache,
-        hidden_models: Optional[Dict[str, str]] = None
+        hidden_models: Optional[Dict[str, str]] = None,
+        aliases: Optional[Dict[str, str]] = None,
+        hidden_from_list: Optional[List[str]] = None
     ):
         """
         Initialize the model resolver.
@@ -255,9 +260,15 @@ class ModelResolver:
             cache: ModelInfoCache instance for dynamic model lookup
             hidden_models: Dict mapping display names to internal Kiro IDs.
                           Display names should use dot format (e.g., "claude-3.7-sonnet")
+            aliases: Dict mapping alias names to real model IDs.
+                    Example: {"auto-kiro": "auto", "my-opus": "claude-opus-4.5"}
+            hidden_from_list: List of model IDs to hide from /v1/models endpoint.
+                             These models still work but are not shown in the list.
         """
         self.cache = cache
         self.hidden_models = hidden_models or {}
+        self.aliases = aliases or {}
+        self.hidden_from_list = set(hidden_from_list or [])
     
     def resolve(self, external_model: str) -> ModelResolution:
         """
@@ -273,8 +284,15 @@ class ModelResolver:
         Returns:
             ModelResolution with internal ID and metadata
         """
+        # Layer 0: Resolve alias (if exists)
+        resolved_model = self.aliases.get(external_model, external_model)
+        if resolved_model != external_model:
+            logger.debug(
+                f"Alias resolved: '{external_model}' → '{resolved_model}'"
+            )
+        
         # Layer 1: Normalize name (dashes→dots, strip date)
-        normalized = normalize_model_name(external_model)
+        normalized = normalize_model_name(resolved_model)
         
         logger.debug(
             f"Model resolution: '{external_model}' → normalized: '{normalized}'"
@@ -326,6 +344,10 @@ class ModelResolver:
         Combines:
         - Models from dynamic cache (Kiro API)
         - Hidden models (manual config)
+        - Alias names (custom mappings)
+        
+        Excludes:
+        - Models in hidden_from_list (e.g., "auto" when showing "auto-kiro")
         
         Returns:
             List of model IDs in consistent format (with dots)
@@ -335,6 +357,12 @@ class ModelResolver:
         
         # Add hidden model display names (they use dot format)
         models.update(self.hidden_models.keys())
+        
+        # Remove models that should be hidden from list
+        models -= self.hidden_from_list
+        
+        # Add alias keys (these are the names users will see and use)
+        models.update(self.aliases.keys())
         
         return sorted(models)
     

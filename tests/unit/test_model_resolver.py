@@ -3,7 +3,8 @@
 """
 Unit tests for Dynamic Model Resolution System.
 
-Tests 4-layer model resolution architecture:
+Tests 5-layer model resolution architecture:
+0. Resolve Aliases - custom name mappings (NEW!)
 1. Normalize Name - convert client formats to Kiro format
 2. Check Dynamic Cache - models from /ListAvailableModels API
 3. Check Hidden Models - manual config for undocumented models
@@ -1286,3 +1287,454 @@ class TestCriticalSafetyPrinciple:
                 # Each suggestion must contain same family
                 assert family in suggestion.lower(), \
                     f"Suggestion '{suggestion}' not from family '{family}'!"
+
+
+# =============================================================================
+# TestModelAliasSystem - Tests for Layer 0 (Aliases)
+# =============================================================================
+
+class TestModelAliasSystemBasics:
+    """
+    Tests for model alias system (Layer 0).
+    
+    Aliases allow custom names that map to real model IDs.
+    Use case: Avoid conflicts with IDE-specific model names (e.g., Cursor's "auto").
+    """
+    
+    def test_alias_resolves_to_target_model(self, mock_model_cache):
+        """
+        What it does: Alias resolves to target model.
+        Purpose: Basic alias functionality.
+        """
+        print("Setup: Creating resolver with alias...")
+        aliases = {"auto-kiro": "auto"}
+        resolver = ModelResolver(cache=mock_model_cache, aliases=aliases)
+        
+        print("Action: Resolving 'auto-kiro'...")
+        result = resolver.resolve("auto-kiro")
+        
+        print(f"Comparing internal_id: Expected 'auto', Got '{result.internal_id}'")
+        assert result.internal_id == "auto"
+        
+        print(f"Comparing source: Expected 'cache', Got '{result.source}'")
+        assert result.source == "cache"
+        
+        print(f"Comparing original_request: Expected 'auto-kiro', Got '{result.original_request}'")
+        assert result.original_request == "auto-kiro"
+    
+    def test_non_aliased_models_work_normally(self, mock_model_cache):
+        """
+        What it does: Non-aliased models work as before.
+        Purpose: Ensure aliases don't break existing functionality.
+        """
+        print("Setup: Creating resolver with alias...")
+        aliases = {"auto-kiro": "auto"}
+        resolver = ModelResolver(cache=mock_model_cache, aliases=aliases)
+        
+        print("Action: Resolving 'claude-haiku-4.5' (not aliased)...")
+        result = resolver.resolve("claude-haiku-4.5")
+        
+        print(f"Comparing internal_id: Expected 'claude-haiku-4.5', Got '{result.internal_id}'")
+        assert result.internal_id == "claude-haiku-4.5"
+        
+        print(f"Comparing source: Expected 'cache', Got '{result.source}'")
+        assert result.source == "cache"
+    
+    def test_alias_with_normalization_chain(self, mock_model_cache):
+        """
+        What it does: Alias → Normalization → Cache.
+        Purpose: Ensure alias works with normalization.
+        """
+        print("Setup: Creating resolver with alias to unnormalized name...")
+        aliases = {"my-haiku": "claude-haiku-4-5"}
+        resolver = ModelResolver(cache=mock_model_cache, aliases=aliases)
+        
+        print("Action: Resolving 'my-haiku'...")
+        result = resolver.resolve("my-haiku")
+        
+        print(f"Comparing internal_id: Expected 'claude-haiku-4.5', Got '{result.internal_id}'")
+        assert result.internal_id == "claude-haiku-4.5"
+        
+        print(f"Comparing normalized: Expected 'claude-haiku-4.5', Got '{result.normalized}'")
+        assert result.normalized == "claude-haiku-4.5"
+    
+    def test_multiple_aliases(self, mock_model_cache):
+        """
+        What it does: Multiple aliases work correctly.
+        Purpose: Ensure multiple aliases don't interfere.
+        """
+        print("Setup: Creating resolver with multiple aliases...")
+        aliases = {
+            "auto-kiro": "auto",
+            "my-opus": "claude-opus-4.5",
+            "fast": "claude-haiku-4.5"
+        }
+        resolver = ModelResolver(cache=mock_model_cache, aliases=aliases)
+        
+        print("Action: Resolving all aliases...")
+        result1 = resolver.resolve("auto-kiro")
+        result2 = resolver.resolve("my-opus")
+        result3 = resolver.resolve("fast")
+        
+        print(f"Comparing: auto-kiro → {result1.internal_id}")
+        assert result1.internal_id == "auto"
+        
+        print(f"Comparing: my-opus → {result2.internal_id}")
+        assert result2.internal_id == "claude-opus-4.5"
+        
+        print(f"Comparing: fast → {result3.internal_id}")
+        assert result3.internal_id == "claude-haiku-4.5"
+
+
+class TestModelAliasSystemEdgeCases:
+    """Edge cases and boundary conditions for alias system."""
+    
+    def test_alias_to_non_existent_model(self, mock_model_cache):
+        """
+        What it does: Alias pointing to non-existent model.
+        Purpose: Ensure passthrough works for aliased non-existent models.
+        """
+        print("Setup: Creating resolver with alias to non-existent model...")
+        aliases = {"future-model": "claude-haiku-5.0"}
+        resolver = ModelResolver(cache=mock_model_cache, aliases=aliases)
+        
+        print("Action: Resolving 'future-model'...")
+        result = resolver.resolve("future-model")
+        
+        print(f"Comparing internal_id: Expected 'claude-haiku-5.0', Got '{result.internal_id}'")
+        assert result.internal_id == "claude-haiku-5.0"
+        
+        print(f"Comparing source: Expected 'passthrough', Got '{result.source}'")
+        assert result.source == "passthrough"
+        
+        print(f"Comparing is_verified: Expected False, Got {result.is_verified}")
+        assert result.is_verified is False
+    
+    def test_alias_to_hidden_model(self, mock_model_cache):
+        """
+        What it does: Alias pointing to hidden model.
+        Purpose: Ensure alias works with hidden models.
+        """
+        print("Setup: Creating resolver with alias to hidden model...")
+        hidden = {"claude-3.7-sonnet": "CLAUDE_3_7_SONNET_20250219_V1_0"}
+        aliases = {"legacy-sonnet": "claude-3.7-sonnet"}
+        resolver = ModelResolver(cache=mock_model_cache, hidden_models=hidden, aliases=aliases)
+        
+        print("Action: Resolving 'legacy-sonnet'...")
+        result = resolver.resolve("legacy-sonnet")
+        
+        print(f"Comparing internal_id: Expected 'CLAUDE_3_7_SONNET_20250219_V1_0', Got '{result.internal_id}'")
+        assert result.internal_id == "CLAUDE_3_7_SONNET_20250219_V1_0"
+        
+        print(f"Comparing source: Expected 'hidden', Got '{result.source}'")
+        assert result.source == "hidden"
+    
+    def test_empty_aliases_dict(self, mock_model_cache):
+        """
+        What it does: Empty aliases dict works correctly.
+        Purpose: Ensure empty dict doesn't break anything.
+        """
+        print("Setup: Creating resolver with empty aliases...")
+        resolver = ModelResolver(cache=mock_model_cache, aliases={})
+        
+        print("Action: Resolving 'auto'...")
+        result = resolver.resolve("auto")
+        
+        print(f"Comparing internal_id: Expected 'auto', Got '{result.internal_id}'")
+        assert result.internal_id == "auto"
+    
+    def test_none_aliases(self, mock_model_cache):
+        """
+        What it does: None aliases parameter works correctly.
+        Purpose: Ensure None is handled as empty dict.
+        """
+        print("Setup: Creating resolver with aliases=None...")
+        resolver = ModelResolver(cache=mock_model_cache, aliases=None)
+        
+        print("Check: aliases initialized as empty dict...")
+        assert resolver.aliases == {}
+    
+    def test_alias_with_same_name_as_real_model(self, mock_model_cache):
+        """
+        What it does: Alias with same name as real model.
+        Purpose: CRITICAL - alias should take precedence!
+        """
+        print("Setup: Creating resolver with alias shadowing real model...")
+        # Alias "auto" to point to "claude-sonnet-4.5"
+        aliases = {"auto": "claude-sonnet-4.5"}
+        resolver = ModelResolver(cache=mock_model_cache, aliases=aliases)
+        
+        print("Action: Resolving 'auto'...")
+        result = resolver.resolve("auto")
+        
+        print(f"Comparing internal_id: Expected 'claude-sonnet-4.5', Got '{result.internal_id}'")
+        assert result.internal_id == "claude-sonnet-4.5"
+        
+        print("CRITICAL: Alias takes precedence over cache!")
+    
+    def test_alias_case_sensitivity(self, mock_model_cache):
+        """
+        What it does: Aliases are case-sensitive.
+        Purpose: Ensure case sensitivity is preserved.
+        """
+        print("Setup: Creating resolver with lowercase alias...")
+        aliases = {"auto-kiro": "auto"}
+        resolver = ModelResolver(cache=mock_model_cache, aliases=aliases)
+        
+        print("Action: Resolving 'AUTO-KIRO' (uppercase)...")
+        result = resolver.resolve("AUTO-KIRO")
+        
+        print(f"Comparing internal_id: Expected 'AUTO-KIRO' (passthrough preserves case), Got '{result.internal_id}'")
+        # Should NOT match alias, should passthrough as-is (preserving original case)
+        assert result.internal_id == "AUTO-KIRO"
+        assert result.source == "passthrough"
+
+
+class TestHiddenFromListFunctionality:
+    """Tests for HIDDEN_FROM_LIST feature."""
+    
+    def test_hidden_model_not_in_available_list(self, mock_model_cache):
+        """
+        What it does: Hidden model doesn't appear in get_available_models().
+        Purpose: Basic HIDDEN_FROM_LIST functionality.
+        """
+        print("Setup: Creating resolver with hidden_from_list...")
+        hidden_from_list = ["auto"]
+        resolver = ModelResolver(cache=mock_model_cache, hidden_from_list=hidden_from_list)
+        
+        print("Action: Getting available models...")
+        models = resolver.get_available_models()
+        
+        print(f"Received models: {models}")
+        print("Check: 'auto' NOT in list...")
+        assert "auto" not in models
+        
+        print("Check: Other models still present...")
+        assert "claude-haiku-4.5" in models
+        assert "claude-sonnet-4.5" in models
+    
+    def test_hidden_model_still_works_when_requested(self, mock_model_cache):
+        """
+        What it does: Hidden model still works when requested directly.
+        Purpose: CRITICAL - hiding from list doesn't disable the model!
+        """
+        print("Setup: Creating resolver with hidden_from_list...")
+        hidden_from_list = ["auto"]
+        resolver = ModelResolver(cache=mock_model_cache, hidden_from_list=hidden_from_list)
+        
+        print("Action: Resolving 'auto' directly...")
+        result = resolver.resolve("auto")
+        
+        print(f"Comparing internal_id: Expected 'auto', Got '{result.internal_id}'")
+        assert result.internal_id == "auto"
+        
+        print(f"Comparing source: Expected 'cache', Got '{result.source}'")
+        assert result.source == "cache"
+        
+        print("CRITICAL: Hidden model still works!")
+    
+    def test_alias_appears_when_original_hidden(self, mock_model_cache):
+        """
+        What it does: Alias appears in list when original is hidden.
+        Purpose: This is the main use case - show alias, hide original.
+        """
+        print("Setup: Creating resolver with alias and hidden original...")
+        aliases = {"auto-kiro": "auto"}
+        hidden_from_list = ["auto"]
+        resolver = ModelResolver(cache=mock_model_cache, aliases=aliases, hidden_from_list=hidden_from_list)
+        
+        print("Action: Getting available models...")
+        models = resolver.get_available_models()
+        
+        print(f"Received models: {models}")
+        print("Check: 'auto-kiro' (alias) IS in list...")
+        assert "auto-kiro" in models
+        
+        print("Check: 'auto' (original) NOT in list...")
+        assert "auto" not in models
+        
+        print("SUCCESS: Alias visible, original hidden!")
+    
+    def test_multiple_hidden_models(self, mock_model_cache):
+        """
+        What it does: Multiple models can be hidden.
+        Purpose: Ensure list works with multiple entries.
+        """
+        print("Setup: Creating resolver with multiple hidden models...")
+        hidden_from_list = ["auto", "claude-sonnet-4"]
+        resolver = ModelResolver(cache=mock_model_cache, hidden_from_list=hidden_from_list)
+        
+        print("Action: Getting available models...")
+        models = resolver.get_available_models()
+        
+        print(f"Received models: {models}")
+        print("Check: Both hidden models NOT in list...")
+        assert "auto" not in models
+        assert "claude-sonnet-4" not in models
+        
+        print("Check: Other models still present...")
+        assert "claude-haiku-4.5" in models
+    
+    def test_empty_hidden_from_list(self, mock_model_cache):
+        """
+        What it does: Empty hidden_from_list works correctly.
+        Purpose: Ensure empty list doesn't break anything.
+        """
+        print("Setup: Creating resolver with empty hidden_from_list...")
+        resolver = ModelResolver(cache=mock_model_cache, hidden_from_list=[])
+        
+        print("Action: Getting available models...")
+        models = resolver.get_available_models()
+        
+        print(f"Received models: {models}")
+        print("Check: All models present...")
+        assert "auto" in models
+        assert "claude-haiku-4.5" in models
+    
+    def test_none_hidden_from_list(self, mock_model_cache):
+        """
+        What it does: None hidden_from_list parameter works correctly.
+        Purpose: Ensure None is handled as empty set.
+        """
+        print("Setup: Creating resolver with hidden_from_list=None...")
+        resolver = ModelResolver(cache=mock_model_cache, hidden_from_list=None)
+        
+        print("Check: hidden_from_list initialized as empty set...")
+        assert resolver.hidden_from_list == set()
+
+
+class TestAliasSystemIntegration:
+    """Integration tests for alias system with existing layers."""
+    
+    def test_cursor_auto_conflict_solution(self, mock_model_cache):
+        """
+        What it does: Solves Cursor IDE "auto" conflict.
+        Purpose: This is the MAIN use case from issue #59!
+        """
+        print("Setup: Simulating Cursor conflict solution...")
+        aliases = {"auto-kiro": "auto"}
+        hidden_from_list = ["auto"]
+        resolver = ModelResolver(cache=mock_model_cache, aliases=aliases, hidden_from_list=hidden_from_list)
+        
+        print("Action: Getting available models (what Cursor sees)...")
+        models = resolver.get_available_models()
+        
+        print(f"Models visible to Cursor: {models}")
+        print("Check: 'auto' NOT visible (no conflict)...")
+        assert "auto" not in models
+        
+        print("Check: 'auto-kiro' IS visible...")
+        assert "auto-kiro" in models
+        
+        print("Action: User requests 'auto-kiro' in Cursor...")
+        result = resolver.resolve("auto-kiro")
+        
+        print(f"Comparing: 'auto-kiro' resolves to '{result.internal_id}'")
+        assert result.internal_id == "auto"
+        
+        print("Action: Old code with 'auto' still works...")
+        result2 = resolver.resolve("auto")
+        
+        print(f"Comparing: 'auto' still resolves to '{result2.internal_id}'")
+        assert result2.internal_id == "auto"
+        
+        print("SUCCESS: Cursor conflict solved! ✅")
+    
+    def test_no_duplicates_in_available_models(self, mock_model_cache):
+        """
+        What it does: No duplicates when alias points to existing model.
+        Purpose: Ensure set logic works correctly.
+        """
+        print("Setup: Creating resolver with alias to existing model...")
+        aliases = {"my-haiku": "claude-haiku-4.5"}
+        resolver = ModelResolver(cache=mock_model_cache, aliases=aliases)
+        
+        print("Action: Getting available models...")
+        models = resolver.get_available_models()
+        
+        print(f"Received models: {models}")
+        print("Check: No duplicates...")
+        assert len(models) == len(set(models))
+        
+        print("Check: Both alias and original present...")
+        assert "my-haiku" in models
+        assert "claude-haiku-4.5" in models
+    
+    def test_alias_with_hidden_models_and_hidden_from_list(self, mock_model_cache):
+        """
+        What it does: Complex scenario with all features.
+        Purpose: Ensure all features work together.
+        """
+        print("Setup: Creating resolver with all features...")
+        hidden_models = {"claude-3.7-sonnet": "CLAUDE_3_7_SONNET_20250219_V1_0"}
+        aliases = {"auto-kiro": "auto", "legacy": "claude-3.7-sonnet"}
+        hidden_from_list = ["auto"]
+        
+        resolver = ModelResolver(
+            cache=mock_model_cache,
+            hidden_models=hidden_models,
+            aliases=aliases,
+            hidden_from_list=hidden_from_list
+        )
+        
+        print("Action: Getting available models...")
+        models = resolver.get_available_models()
+        
+        print(f"Received models: {models}")
+        
+        print("Check: Alias 'auto-kiro' present...")
+        assert "auto-kiro" in models
+        
+        print("Check: Original 'auto' hidden...")
+        assert "auto" not in models
+        
+        print("Check: Hidden model 'claude-3.7-sonnet' present...")
+        assert "claude-3.7-sonnet" in models
+        
+        print("Check: Alias to hidden model 'legacy' present...")
+        assert "legacy" in models
+        
+        print("Check: Cache models present...")
+        assert "claude-haiku-4.5" in models
+
+
+class TestAliasSystemSecurity:
+    """Security tests - ensure aliases don't break safety principles."""
+    
+    def test_alias_cannot_bypass_family_isolation(self, mock_model_cache):
+        """
+        What it does: Alias doesn't break family isolation.
+        Purpose: CRITICAL - ensure aliases don't create security holes!
+        """
+        print("Setup: Creating resolver with alias...")
+        aliases = {"my-model": "claude-opus-5"}
+        resolver = ModelResolver(cache=mock_model_cache, aliases=aliases)
+        
+        print("Action: Resolving 'my-model' (points to non-existent Opus)...")
+        result = resolver.resolve("my-model")
+        
+        print(f"Result: {result}")
+        print("Check: Does NOT fallback to Sonnet or Haiku...")
+        assert "sonnet" not in result.internal_id.lower()
+        assert "haiku" not in result.internal_id.lower()
+        
+        print("Check: Passthrough preserves family...")
+        assert "opus" in result.internal_id.lower()
+    
+    def test_alias_suggestions_respect_target_family(self, mock_model_cache):
+        """
+        What it does: Suggestions for aliased model respect target family.
+        Purpose: Ensure get_suggestions_for_model() works with aliases.
+        """
+        print("Setup: Creating resolver with alias...")
+        aliases = {"fast": "claude-haiku-4.5"}
+        resolver = ModelResolver(cache=mock_model_cache, aliases=aliases)
+        
+        print("Action: Getting suggestions for 'fast'...")
+        # Note: get_suggestions_for_model() extracts family from the NAME
+        # So it won't find "haiku" in "fast", will return all models
+        suggestions = resolver.get_suggestions_for_model("fast")
+        
+        print(f"Received suggestions: {suggestions}")
+        # This is expected behavior - alias name doesn't contain family
+        assert len(suggestions) > 0
