@@ -40,6 +40,7 @@ from loguru import logger
 
 from kiro.config import (
     TOKEN_REFRESH_THRESHOLD,
+    KIRO_CLI_API_REGION,
     get_kiro_refresh_url,
     get_kiro_api_host,
     get_kiro_q_host,
@@ -188,10 +189,23 @@ class KiroAuthManager:
         
         AWS SSO OIDC credentials contain clientId and clientSecret.
         Kiro Desktop credentials do not contain these fields.
+        
+        For kiro-cli (AWS SSO OIDC), the API region may differ from SSO region.
+        Configure via KIRO_CLI_API_REGION env var if needed.
         """
         if self._client_id and self._client_secret:
             self._auth_type = AuthType.AWS_SSO_OIDC
             logger.info("Detected auth type: AWS SSO OIDC (kiro-cli)")
+            
+            # kiro-cli may use a different region for the Q API than for SSO
+            # Only override if KIRO_CLI_API_REGION is explicitly set
+            if KIRO_CLI_API_REGION:
+                if not self._sso_region:
+                    self._sso_region = self._region
+                self._region = KIRO_CLI_API_REGION
+                self._api_host = get_kiro_api_host(self._region)
+                self._q_host = get_kiro_q_host(self._region)
+                logger.info(f"Updated API region for kiro-cli: region={self._region}, api_host={self._api_host}")
         else:
             self._auth_type = AuthType.KIRO_DESKTOP
             logger.info("Detected auth type: Kiro Desktop")
