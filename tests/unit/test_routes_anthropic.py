@@ -1589,3 +1589,430 @@ class TestContentTruncationRecovery:
         print("Checking: Message unchanged...")
         text = self._get_block_value(modified_messages[0].content[0], "text")
         assert text == "This is a complete response."
+
+
+# =============================================================================
+# Tests for /v1/messages/count_tokens endpoint
+# =============================================================================
+
+class TestCountTokensAuthentication:
+    """Tests for authentication on /v1/messages/count_tokens endpoint."""
+
+    def test_requires_authentication(self, test_client):
+        """
+        What it does: Verifies count_tokens endpoint requires authentication.
+        Purpose: Ensure protected endpoint is secured.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello"}]
+            }
+        )
+        assert response.status_code == 401
+
+    def test_accepts_x_api_key(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies count_tokens accepts x-api-key header.
+        Purpose: Ensure Anthropic native authentication works.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello"}]
+            }
+        )
+        assert response.status_code != 401
+
+    def test_accepts_bearer_token(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies count_tokens accepts Bearer token.
+        Purpose: Ensure OpenAI-style authentication also works.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"Authorization": f"Bearer {valid_proxy_api_key}"},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello"}]
+            }
+        )
+        assert response.status_code != 401
+
+    def test_rejects_invalid_key(self, test_client, invalid_proxy_api_key):
+        """
+        What it does: Verifies count_tokens rejects invalid API key.
+        Purpose: Ensure authentication is enforced.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": invalid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello"}]
+            }
+        )
+        assert response.status_code == 401
+
+
+class TestCountTokensValidation:
+    """Tests for request validation on /v1/messages/count_tokens endpoint."""
+
+    def test_validates_missing_model(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies missing model field is rejected.
+        Purpose: Ensure model is required.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "messages": [{"role": "user", "content": "Hello"}]
+            }
+        )
+        assert response.status_code == 422
+
+    def test_validates_missing_messages(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies missing messages field is rejected.
+        Purpose: Ensure messages are required.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5"
+            }
+        )
+        assert response.status_code == 422
+
+    def test_validates_empty_messages(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies empty messages array is rejected.
+        Purpose: Ensure at least one message is required.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": []
+            }
+        )
+        assert response.status_code == 422
+
+    def test_validates_invalid_role(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies invalid message role is rejected.
+        Purpose: Anthropic only allows 'user' or 'assistant'.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "system", "content": "Hello"}]
+            }
+        )
+        assert response.status_code == 422
+
+    def test_does_not_require_max_tokens(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies max_tokens is NOT required for count_tokens.
+        Purpose: Unlike /v1/messages, count_tokens doesn't need max_tokens.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello"}]
+            }
+        )
+        # Should not be 422 (validation error)
+        assert response.status_code != 422
+
+
+class TestCountTokensResponse:
+    """Tests for /v1/messages/count_tokens response format and correctness."""
+
+    def test_returns_input_tokens(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies response contains input_tokens field.
+        Purpose: Ensure Anthropic-compatible response format.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello, world!"}]
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "input_tokens" in data
+        assert isinstance(data["input_tokens"], int)
+        assert data["input_tokens"] > 0
+
+    def test_longer_messages_more_tokens(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies longer messages produce more tokens.
+        Purpose: Ensure token counting is proportional to content.
+        """
+        short_response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hi"}]
+            }
+        )
+        long_response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [
+                    {"role": "user", "content": "Tell me a very long story about dragons and knights and castles and magic"},
+                    {"role": "assistant", "content": "Once upon a time in a land far far away there lived a brave knight"},
+                    {"role": "user", "content": "Continue the story with more details about the dragon"}
+                ]
+            }
+        )
+        assert short_response.status_code == 200
+        assert long_response.status_code == 200
+        assert long_response.json()["input_tokens"] > short_response.json()["input_tokens"]
+
+    def test_tools_increase_token_count(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies tools add to the token count.
+        Purpose: Ensure tool definitions are counted.
+        """
+        without_tools = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "What is the weather?"}]
+            }
+        )
+        with_tools = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "What is the weather?"}],
+                "tools": [
+                    {
+                        "name": "get_weather",
+                        "description": "Get the current weather for a location with detailed forecast",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {
+                                "location": {"type": "string", "description": "City name"},
+                                "units": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+                            },
+                            "required": ["location"]
+                        }
+                    }
+                ]
+            }
+        )
+        assert without_tools.status_code == 200
+        assert with_tools.status_code == 200
+        assert with_tools.json()["input_tokens"] > without_tools.json()["input_tokens"]
+
+    def test_system_prompt_increases_token_count(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies system prompt adds to the token count.
+        Purpose: Ensure system prompt is counted.
+        """
+        without_system = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello"}]
+            }
+        )
+        with_system = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "system": "You are a helpful assistant that always responds in detail."
+            }
+        )
+        assert without_system.status_code == 200
+        assert with_system.status_code == 200
+        assert with_system.json()["input_tokens"] > without_system.json()["input_tokens"]
+
+    def test_system_as_content_blocks(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies system prompt as list of content blocks works.
+        Purpose: Ensure prompt caching format is supported.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "system": [
+                    {"type": "text", "text": "You are a helpful assistant."},
+                    {"type": "text", "text": "Always be concise.", "cache_control": {"type": "ephemeral"}}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "input_tokens" in data
+        assert data["input_tokens"] > 0
+
+    def test_content_blocks_format(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies content block array format works.
+        Purpose: Ensure Anthropic content block format is supported.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "First part of the message"},
+                            {"type": "text", "text": "Second part of the message"}
+                        ]
+                    }
+                ]
+            }
+        )
+        assert response.status_code == 200
+        assert response.json()["input_tokens"] > 0
+
+    def test_tool_use_and_tool_result_messages(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies tool use/result conversation is counted correctly.
+        Purpose: Ensure complex conversations with tools are handled.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [
+                    {"role": "user", "content": "What is the weather in Istanbul?"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "Let me check."},
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_123",
+                                "name": "get_weather",
+                                "input": {"location": "Istanbul"}
+                            }
+                        ]
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_123",
+                                "content": "Sunny, 30°C"
+                            }
+                        ]
+                    }
+                ]
+            }
+        )
+        assert response.status_code == 200
+        assert response.json()["input_tokens"] > 0
+
+    def test_deterministic_results(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies same request always returns same token count.
+        Purpose: Ensure deterministic behavior.
+        """
+        payload = {
+            "model": "claude-sonnet-4-5",
+            "messages": [{"role": "user", "content": "Deterministic test message"}]
+        }
+        results = []
+        for _ in range(3):
+            response = test_client.post(
+                "/v1/messages/count_tokens",
+                headers={"x-api-key": valid_proxy_api_key},
+                json=payload
+            )
+            assert response.status_code == 200
+            results.append(response.json()["input_tokens"])
+
+        assert len(set(results)) == 1, f"Results should be deterministic, got: {results}"
+
+    def test_accepts_anthropic_version_header(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies anthropic-version header is accepted.
+        Purpose: Ensure Anthropic SDK compatibility.
+        """
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={
+                "x-api-key": valid_proxy_api_key,
+                "anthropic-version": "2023-06-01"
+            },
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "Hello"}]
+            }
+        )
+        assert response.status_code == 200
+
+    def test_no_kiro_api_call_made(self, test_client, valid_proxy_api_key):
+        """
+        What it does: Verifies count_tokens does NOT call Kiro API.
+        Purpose: Ensure this is a local-only operation (fast, no network).
+        """
+        # The global block_all_network_calls fixture would cause a RuntimeError
+        # if any real HTTP request was made. If this test passes, no network call happened.
+        response = test_client.post(
+            "/v1/messages/count_tokens",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "This should not trigger any API call"}]
+            }
+        )
+        assert response.status_code == 200
+
+
+class TestCountTokensRouterIntegration:
+    """Tests for count_tokens endpoint router registration."""
+
+    def test_router_has_count_tokens_endpoint(self):
+        """
+        What it does: Verifies count_tokens endpoint is registered.
+        Purpose: Ensure endpoint is available.
+        """
+        routes = [route.path for route in router.routes]
+        assert "/v1/messages/count_tokens" in routes
+
+    def test_count_tokens_endpoint_uses_post_method(self):
+        """
+        What it does: Verifies count_tokens endpoint uses POST method.
+        Purpose: Ensure correct HTTP method.
+        """
+        for route in router.routes:
+            if route.path == "/v1/messages/count_tokens":
+                assert "POST" in route.methods
+                return
+        pytest.fail("count_tokens endpoint not found")

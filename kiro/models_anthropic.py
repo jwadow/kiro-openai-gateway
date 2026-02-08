@@ -285,6 +285,48 @@ class AnthropicMessagesRequest(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class CountTokensRequest(BaseModel):
+    """
+    Request to Anthropic Count Tokens API (/v1/messages/count_tokens).
+
+    Counts the number of input tokens for a given request without
+    actually creating a message. Useful for estimating costs and
+    checking if a request fits within model context limits.
+
+    Reference: https://docs.anthropic.com/en/api/counting-tokens
+
+    Attributes:
+        model: Model ID (e.g., "claude-sonnet-4-5")
+        messages: List of conversation messages
+        system: System prompt (optional, string or list of content blocks)
+        tools: List of available tools (optional)
+        tool_choice: Tool selection strategy (optional)
+    """
+
+    model: str
+    messages: List[AnthropicMessage] = Field(min_length=1)
+
+    # Optional parameters
+    system: Optional[SystemPrompt] = None
+    tools: Optional[List[AnthropicTool]] = None
+    tool_choice: Optional[Union[ToolChoice, Dict[str, Any]]] = None
+
+    model_config = {"extra": "allow"}
+
+
+class CountTokensResponse(BaseModel):
+    """
+    Response from Anthropic Count Tokens API.
+
+    Reference: https://docs.anthropic.com/en/api/counting-tokens
+
+    Attributes:
+        input_tokens: Estimated number of input tokens
+    """
+
+    input_tokens: int
+
+
 # ==================================================================================================
 # Response Models
 # ==================================================================================================

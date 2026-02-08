@@ -20,6 +20,11 @@ from kiro.tokenizer import (
     count_message_tokens,
     count_tools_tokens,
     estimate_request_tokens,
+    count_anthropic_content_block_tokens,
+    count_anthropic_message_tokens,
+    count_anthropic_tools_tokens,
+    count_anthropic_system_tokens,
+    estimate_anthropic_request_tokens,
     CLAUDE_CORRECTION_FACTOR,
     _get_encoding
 )
@@ -855,5 +860,467 @@ class TestTokenizerIntegration:
         
         # Все результаты должны быть одинаковыми
         assert len(set(results)) == 1, "Результаты должны быть консистентными"
-    
-    
+
+
+# =============================================================================
+# Tests for Anthropic-format token counting
+# =============================================================================
+
+
+class TestCountAnthropicContentBlockTokens:
+    """Tests for count_anthropic_content_block_tokens function."""
+
+    def test_text_block(self):
+        """Counts tokens in a text content block."""
+        block = {"type": "text", "text": "Hello, world!"}
+        result = count_anthropic_content_block_tokens(block)
+        assert result > 0
+
+    def test_empty_text_block(self):
+        """Empty text block returns 0 tokens."""
+        block = {"type": "text", "text": ""}
+        result = count_anthropic_content_block_tokens(block)
+        assert result == 0
+
+    def test_thinking_block(self):
+        """Counts tokens in a thinking content block."""
+        block = {"type": "thinking", "thinking": "Let me reason about this step by step..."}
+        result = count_anthropic_content_block_tokens(block)
+        assert result > 0
+
+    def test_image_block_returns_fixed_estimate(self):
+        """Image blocks return a fixed ~100 token estimate."""
+        block = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "abc123"}}
+        result = count_anthropic_content_block_tokens(block)
+        assert result == 100
+
+    def test_tool_use_block(self):
+        """Counts tokens in a tool_use content block."""
+        block = {
+            "type": "tool_use",
+            "id": "toolu_123",
+            "name": "get_weather",
+            "input": {"location": "Istanbul", "units": "celsius"}
+        }
+        result = count_anthropic_content_block_tokens(block)
+        # Should include service tokens + name + input JSON
+        assert result > 4
+
+    def test_tool_use_block_empty_input(self):
+        """Tool use with empty input still has service + name tokens."""
+        block = {"type": "tool_use", "id": "toolu_123", "name": "ping", "input": {}}
+        result = count_anthropic_content_block_tokens(block)
+        assert result > 0
+
+    def test_tool_result_block_string_content(self):
+        """Counts tokens in a tool_result with string content."""
+        block = {
+            "type": "tool_result",
+            "tool_use_id": "toolu_123",
+            "content": "The weather in Istanbul is sunny, 28°C"
+        }
+        result = count_anthropic_content_block_tokens(block)
+        assert result > 4
+
+    def test_tool_result_block_list_content(self):
+        """Counts tokens in a tool_result with nested content blocks."""
+        block = {
+            "type": "tool_result",
+            "tool_use_id": "toolu_123",
+            "content": [
+                {"type": "text", "text": "Result line 1"},
+                {"type": "text", "text": "Result line 2"}
+            ]
+        }
+        result = count_anthropic_content_block_tokens(block)
+        assert result > 4
+
+    def test_tool_result_block_empty_content(self):
+        """Tool result with empty content still has service tokens."""
+        block = {"type": "tool_result", "tool_use_id": "toolu_123", "content": ""}
+        result = count_anthropic_content_block_tokens(block)
+        # Service tokens + tool_use_id tokens
+        assert result > 0
+
+    def test_tool_result_with_nested_image(self):
+        """Tool result containing an image in nested content."""
+        block = {
+            "type": "tool_result",
+            "tool_use_id": "toolu_123",
+            "content": [
+                {"type": "text", "text": "Screenshot captured"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}}
+            ]
+        }
+        result = count_anthropic_content_block_tokens(block)
+        # Should include text tokens + 100 for image + service tokens
+        assert result > 100
+
+    def test_unknown_block_type_returns_zero(self):
+        """Unknown block types return 0 tokens."""
+        block = {"type": "unknown_type", "data": "something"}
+        result = count_anthropic_content_block_tokens(block)
+        assert result == 0
+
+    def test_missing_type_returns_zero(self):
+        """Block without type field returns 0 tokens."""
+        block = {"text": "no type field"}
+        result = count_anthropic_content_block_tokens(block)
+        assert result == 0
+
+
+class TestCountAnthropicMessageTokens:
+    """Tests for count_anthropic_message_tokens function."""
+
+    def test_empty_list_returns_zero(self):
+        """Empty message list returns 0."""
+        assert count_anthropic_message_tokens([]) == 0
+
+    def test_none_returns_zero(self):
+        """None returns 0."""
+        assert count_anthropic_message_tokens(None) == 0
+
+    def test_single_string_content_message(self):
+        """Counts tokens for a message with string content."""
+        messages = [{"role": "user", "content": "Hello, Claude!"}]
+        result = count_anthropic_message_tokens(messages)
+        assert result > 0
+
+    def test_single_block_content_message(self):
+        """Counts tokens for a message with content block list."""
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Hello, Claude!"}]
+            }
+        ]
+        result = count_anthropic_message_tokens(messages)
+        assert result > 0
+
+    def test_multi_turn_conversation(self):
+        """Multi-turn conversation has more tokens than single message."""
+        single = [{"role": "user", "content": "Hi"}]
+        multi = [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello! How can I help?"},
+            {"role": "user", "content": "What is the weather?"},
+        ]
+        single_tokens = count_anthropic_message_tokens(single)
+        multi_tokens = count_anthropic_message_tokens(multi)
+        assert multi_tokens > single_tokens
+
+    def test_message_with_tool_use_blocks(self):
+        """Counts tokens for assistant message with tool_use blocks."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Let me check the weather."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_abc",
+                        "name": "get_weather",
+                        "input": {"location": "Paris"}
+                    }
+                ]
+            }
+        ]
+        result = count_anthropic_message_tokens(messages)
+        assert result > 0
+
+    def test_thinking_blocks_skipped_in_assistant_messages(self):
+        """Thinking blocks in assistant messages are NOT counted (Anthropic spec)."""
+        messages_with_thinking = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Let me reason step by step about this complex problem..."},
+                    {"type": "text", "text": "The answer is 42."}
+                ]
+            }
+        ]
+        messages_without_thinking = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "The answer is 42."}
+                ]
+            }
+        ]
+        with_thinking = count_anthropic_message_tokens(messages_with_thinking)
+        without_thinking = count_anthropic_message_tokens(messages_without_thinking)
+        assert with_thinking == without_thinking
+
+    def test_thinking_blocks_skipped_only_for_assistant_role(self):
+        """Thinking blocks are only skipped for assistant role, not user."""
+        # User message with thinking block (unusual but should be counted)
+        user_msg = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "thinking", "thinking": "Some thinking text here"},
+                    {"type": "text", "text": "Hello"}
+                ]
+            }
+        ]
+        user_msg_no_thinking = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Hello"}
+                ]
+            }
+        ]
+        with_thinking = count_anthropic_message_tokens(user_msg)
+        without_thinking = count_anthropic_message_tokens(user_msg_no_thinking)
+        # User thinking blocks SHOULD be counted (not skipped)
+        assert with_thinking > without_thinking
+
+    def test_message_with_tool_result_blocks(self):
+        """Counts tokens for user message with tool_result blocks."""
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_abc",
+                        "content": "Sunny, 25°C in Paris"
+                    }
+                ]
+            }
+        ]
+        result = count_anthropic_message_tokens(messages)
+        assert result > 0
+
+    def test_message_with_image_block(self):
+        """Image blocks contribute ~100 tokens."""
+        without_image = [{"role": "user", "content": [{"type": "text", "text": "Describe this"}]}]
+        with_image = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}}
+                ]
+            }
+        ]
+        tokens_without = count_anthropic_message_tokens(without_image)
+        tokens_with = count_anthropic_message_tokens(with_image)
+        assert tokens_with > tokens_without
+
+    def test_claude_correction_applied(self):
+        """Claude correction factor increases token count."""
+        messages = [{"role": "user", "content": "Test message for correction factor"}]
+        with_correction = count_anthropic_message_tokens(messages, apply_claude_correction=True)
+        without_correction = count_anthropic_message_tokens(messages, apply_claude_correction=False)
+        assert with_correction > without_correction
+
+    def test_empty_content_message(self):
+        """Message with empty string content still has service tokens."""
+        messages = [{"role": "assistant", "content": ""}]
+        result = count_anthropic_message_tokens(messages)
+        assert result > 0
+
+    def test_none_content_message(self):
+        """Message with None content still has service tokens."""
+        messages = [{"role": "assistant", "content": None}]
+        result = count_anthropic_message_tokens(messages)
+        assert result > 0
+
+
+class TestCountAnthropicToolsTokens:
+    """Tests for count_anthropic_tools_tokens function."""
+
+    def test_none_returns_zero(self):
+        """None returns 0."""
+        assert count_anthropic_tools_tokens(None) == 0
+
+    def test_empty_list_returns_zero(self):
+        """Empty list returns 0."""
+        assert count_anthropic_tools_tokens([]) == 0
+
+    def test_single_tool(self):
+        """Counts tokens for a single Anthropic tool definition."""
+        tools = [
+            {
+                "name": "get_weather",
+                "description": "Get the current weather for a location",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "City name"}
+                    },
+                    "required": ["location"]
+                }
+            }
+        ]
+        result = count_anthropic_tools_tokens(tools)
+        assert result > 0
+
+    def test_multiple_tools(self):
+        """More tools means more tokens."""
+        one_tool = [
+            {"name": "tool_a", "description": "Tool A", "input_schema": {"type": "object", "properties": {}}}
+        ]
+        two_tools = [
+            {"name": "tool_a", "description": "Tool A", "input_schema": {"type": "object", "properties": {}}},
+            {"name": "tool_b", "description": "Tool B", "input_schema": {"type": "object", "properties": {}}}
+        ]
+        assert count_anthropic_tools_tokens(two_tools) > count_anthropic_tools_tokens(one_tool)
+
+    def test_tool_without_description(self):
+        """Tool without description still has name + schema tokens."""
+        tools = [
+            {"name": "ping", "input_schema": {"type": "object", "properties": {}}}
+        ]
+        result = count_anthropic_tools_tokens(tools)
+        assert result > 0
+
+    def test_tool_with_complex_schema(self):
+        """Complex input_schema produces more tokens."""
+        simple = [
+            {"name": "func", "description": "Simple", "input_schema": {"type": "object", "properties": {}}}
+        ]
+        complex_tool = [
+            {
+                "name": "func",
+                "description": "Complex",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Full name"},
+                        "age": {"type": "integer", "description": "Age in years"},
+                        "address": {
+                            "type": "object",
+                            "properties": {
+                                "street": {"type": "string"},
+                                "city": {"type": "string"},
+                                "zip": {"type": "string"}
+                            }
+                        }
+                    },
+                    "required": ["name", "age"]
+                }
+            }
+        ]
+        assert count_anthropic_tools_tokens(complex_tool) > count_anthropic_tools_tokens(simple)
+
+    def test_claude_correction_applied(self):
+        """Claude correction factor increases tool token count."""
+        tools = [
+            {"name": "test", "description": "A test tool", "input_schema": {"type": "object", "properties": {}}}
+        ]
+        with_correction = count_anthropic_tools_tokens(tools, apply_claude_correction=True)
+        without_correction = count_anthropic_tools_tokens(tools, apply_claude_correction=False)
+        assert with_correction > without_correction
+
+
+class TestCountAnthropicSystemTokens:
+    """Tests for count_anthropic_system_tokens function."""
+
+    def test_none_returns_zero(self):
+        """None system prompt returns 0."""
+        assert count_anthropic_system_tokens(None) == 0
+
+    def test_empty_string_returns_zero(self):
+        """Empty string returns 0."""
+        assert count_anthropic_system_tokens("") == 0
+
+    def test_string_system_prompt(self):
+        """Counts tokens for a plain string system prompt."""
+        result = count_anthropic_system_tokens("You are a helpful assistant.")
+        assert result > 0
+
+    def test_list_system_prompt(self):
+        """Counts tokens for a list-of-blocks system prompt (prompt caching format)."""
+        system = [
+            {"type": "text", "text": "You are a helpful assistant."},
+            {"type": "text", "text": "Always be concise.", "cache_control": {"type": "ephemeral"}}
+        ]
+        result = count_anthropic_system_tokens(system)
+        assert result > 0
+
+    def test_list_system_prompt_matches_string(self):
+        """List format with single block should be close to equivalent string."""
+        text = "You are a helpful assistant."
+        string_tokens = count_anthropic_system_tokens(text)
+        list_tokens = count_anthropic_system_tokens([{"type": "text", "text": text}])
+        # Should be the same since both contain the same text
+        assert string_tokens == list_tokens
+
+    def test_empty_list_returns_zero(self):
+        """Empty list returns 0."""
+        assert count_anthropic_system_tokens([]) == 0
+
+    def test_claude_correction_applied(self):
+        """Claude correction factor increases system token count."""
+        system = "You are a helpful assistant that always provides detailed, accurate, and well-structured responses to user queries."
+        with_correction = count_anthropic_system_tokens(system, apply_claude_correction=True)
+        without_correction = count_anthropic_system_tokens(system, apply_claude_correction=False)
+        assert with_correction > without_correction
+
+
+class TestEstimateAnthropicRequestTokens:
+    """Tests for estimate_anthropic_request_tokens function."""
+
+    def test_messages_only(self):
+        """Counts tokens for messages-only request."""
+        messages = [{"role": "user", "content": "Hello!"}]
+        result = estimate_anthropic_request_tokens(messages)
+        assert result > 0
+
+    def test_messages_with_tools(self):
+        """Tools add to the total token count."""
+        messages = [{"role": "user", "content": "Hello!"}]
+        tools = [
+            {"name": "get_weather", "description": "Get weather", "input_schema": {"type": "object", "properties": {}}}
+        ]
+        without_tools = estimate_anthropic_request_tokens(messages)
+        with_tools = estimate_anthropic_request_tokens(messages, tools=tools)
+        assert with_tools > without_tools
+
+    def test_messages_with_system(self):
+        """System prompt adds to the total token count."""
+        messages = [{"role": "user", "content": "Hello!"}]
+        without_system = estimate_anthropic_request_tokens(messages)
+        with_system = estimate_anthropic_request_tokens(messages, system="You are a helpful assistant.")
+        assert with_system > without_system
+
+    def test_full_request(self):
+        """Full request with messages + tools + system."""
+        messages = [
+            {"role": "user", "content": "What is the weather in Istanbul?"},
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": {"location": "Istanbul"}}
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1", "content": "Sunny, 30°C"}
+            ]}
+        ]
+        tools = [
+            {
+                "name": "get_weather",
+                "description": "Get weather for a location",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"location": {"type": "string"}},
+                    "required": ["location"]
+                }
+            }
+        ]
+        system = "You are a weather assistant."
+
+        result = estimate_anthropic_request_tokens(messages, tools=tools, system=system)
+        assert result > 50  # Should be a reasonable number for this request
+
+    def test_empty_messages(self):
+        """Empty messages returns 0 (or close to 0)."""
+        result = estimate_anthropic_request_tokens([])
+        assert result == 0
+
+    def test_consistency(self):
+        """Same input always produces same output."""
+        messages = [{"role": "user", "content": "Deterministic test"}]
+        results = [estimate_anthropic_request_tokens(messages) for _ in range(5)]
+        assert len(set(results)) == 1

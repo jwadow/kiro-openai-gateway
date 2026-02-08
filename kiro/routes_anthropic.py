@@ -40,6 +40,8 @@ from kiro.models_anthropic import (
     AnthropicMessagesResponse,
     AnthropicErrorResponse,
     AnthropicErrorDetail,
+    CountTokensRequest,
+    CountTokensResponse,
 )
 from kiro.auth import KiroAuthManager, AuthType
 from kiro.cache import ModelInfoCache
@@ -50,7 +52,7 @@ from kiro.streaming_anthropic import (
 )
 from kiro.http_client import KiroHttpClient
 from kiro.utils import generate_conversation_id
-from kiro.tokenizer import count_tools_tokens
+from kiro.tokenizer import count_tools_tokens, estimate_anthropic_request_tokens
 
 # Import debug_logger
 try:
@@ -440,6 +442,93 @@ async def messages(
         if debug_logger:
             debug_logger.flush_on_error(500, str(e))
         
+        return JSONResponse(
+            status_code=500,
+            content={
+                "type": "error",
+                "error": {
+                    "type": "api_error",
+                    "message": f"Internal Server Error: {str(e)}"
+                }
+            }
+        )
+
+
+@router.post("/v1/messages/count_tokens", dependencies=[Depends(verify_anthropic_api_key)])
+async def count_tokens(
+    request: Request,
+    request_data: CountTokensRequest,
+    anthropic_version: Optional[str] = Header(None, alias="anthropic-version")
+):
+    """
+    Anthropic Count Tokens API endpoint.
+
+    Compatible with Anthropic's /v1/messages/count_tokens endpoint.
+    Counts the number of input tokens for a given request without
+    creating a message. Useful for cost estimation and context window checks.
+
+    This is a local approximation using tiktoken with a Claude correction
+    factor. It does NOT call the Kiro API - all counting is done locally.
+
+    Required headers:
+    - x-api-key: Your API key (or Authorization: Bearer)
+    - anthropic-version: API version (optional, for compatibility)
+    - Content-Type: application/json
+
+    Args:
+        request: FastAPI Request for accessing app.state
+        request_data: CountTokensRequest with model, messages, system, tools
+        anthropic_version: Anthropic API version header (optional)
+
+    Returns:
+        JSONResponse with {"input_tokens": <count>}
+
+    Raises:
+        HTTPException: On validation errors
+    """
+    logger.info(f"Request to /v1/messages/count_tokens (model={request_data.model})")
+
+    if anthropic_version:
+        logger.debug(f"Anthropic-Version header: {anthropic_version}")
+
+    try:
+        # Convert Pydantic models to dicts for tokenizer
+        messages_dicts = [msg.model_dump() for msg in request_data.messages]
+
+        tools_dicts = None
+        if request_data.tools:
+            tools_dicts = [tool.model_dump() for tool in request_data.tools]
+
+        # System prompt can be str, list of dicts, or list of Pydantic models
+        system_for_tokenizer = None
+        if request_data.system is not None:
+            if isinstance(request_data.system, str):
+                system_for_tokenizer = request_data.system
+            elif isinstance(request_data.system, list):
+                system_for_tokenizer = []
+                for block in request_data.system:
+                    if isinstance(block, dict):
+                        system_for_tokenizer.append(block)
+                    elif hasattr(block, "model_dump"):
+                        system_for_tokenizer.append(block.model_dump())
+                    else:
+                        system_for_tokenizer.append({"type": "text", "text": str(block)})
+
+        # Count tokens locally (no Kiro API call needed)
+        input_tokens = estimate_anthropic_request_tokens(
+            messages=messages_dicts,
+            tools=tools_dicts,
+            system=system_for_tokenizer,
+        )
+
+        logger.info(f"HTTP 200 - POST /v1/messages/count_tokens - {input_tokens} input tokens")
+
+        return JSONResponse(
+            content=CountTokensResponse(input_tokens=input_tokens).model_dump()
+        )
+
+    except Exception as e:
+        logger.error(f"HTTP 500 - POST /v1/messages/count_tokens - {str(e)[:100]}")
         return JSONResponse(
             status_code=500,
             content={
