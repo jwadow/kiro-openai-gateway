@@ -24,7 +24,7 @@ This module is an adapter layer that converts Anthropic-specific formats
 to the unified format used by converters_core.py.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from loguru import logger
 
@@ -42,6 +42,7 @@ from kiro.converters_core import (
     extract_text_content,
     extract_images_from_content,
 )
+from kiro.thinking_policy import resolve_anthropic_policy
 
 
 def convert_anthropic_content_to_text(content: Any) -> str:
@@ -370,7 +371,10 @@ def convert_anthropic_tools(
 
 
 def anthropic_to_kiro(
-    request: AnthropicMessagesRequest, conversation_id: str, profile_arn: str
+    request: AnthropicMessagesRequest,
+    conversation_id: str,
+    profile_arn: str,
+    headers: Optional[Mapping[str, str]] = None,
 ) -> dict:
     """
     Converts Anthropic Messages API request to Kiro API payload.
@@ -386,6 +390,7 @@ def anthropic_to_kiro(
         request: Anthropic MessagesRequest
         conversation_id: Unique conversation ID
         profile_arn: AWS CodeWhisperer profile ARN
+        headers: Optional raw request headers
 
     Returns:
         Payload dictionary for POST request to Kiro API
@@ -406,11 +411,16 @@ def anthropic_to_kiro(
     # Get model ID for Kiro API (normalizes + resolves hidden models)
     # Pass-through principle: we normalize and send to Kiro, Kiro decides if valid
     model_id = get_model_id_for_kiro(request.model, HIDDEN_MODELS)
+    policy = resolve_anthropic_policy(
+        request.model_dump(exclude_none=True),
+        headers=headers,
+    )
 
     logger.debug(
         f"Converting Anthropic request: model={request.model} -> {model_id}, "
         f"messages={len(unified_messages)}, tools={len(unified_tools) if unified_tools else 0}, "
-        f"system_prompt_length={len(system_prompt)}"
+        f"system_prompt_length={len(system_prompt)}, thinking_source={policy.source}, "
+        f"thinking_level={policy.normalized_level}, thinking_budget={policy.thinking_max_tokens}"
     )
 
     # Use core function to build payload
@@ -421,7 +431,8 @@ def anthropic_to_kiro(
         tools=unified_tools,
         conversation_id=conversation_id,
         profile_arn=profile_arn,
-        inject_thinking=True,
+        inject_thinking=policy.inject_thinking,
+        thinking_max_tokens=policy.thinking_max_tokens,
     )
 
     return result.payload

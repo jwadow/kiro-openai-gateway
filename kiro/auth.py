@@ -40,6 +40,7 @@ from loguru import logger
 
 from kiro.config import (
     TOKEN_REFRESH_THRESHOLD,
+    ALLOW_UNTRUSTED_TLS,
     get_kiro_refresh_url,
     get_kiro_api_host,
     get_kiro_q_host,
@@ -150,6 +151,9 @@ class KiroAuthManager:
         
         # Enterprise Kiro IDE specific fields
         self._client_id_hash: Optional[str] = None  # clientIdHash from Enterprise Kiro IDE
+
+        # Social login marker when token source is kirocli:social:token
+        self._is_social_login: bool = False
         
         # Track which SQLite key we loaded credentials from (for saving back to correct location)
         self._sqlite_token_key: Optional[str] = None
@@ -189,7 +193,10 @@ class KiroAuthManager:
         AWS SSO OIDC credentials contain clientId and clientSecret.
         Kiro Desktop credentials do not contain these fields.
         """
-        if self._client_id and self._client_secret:
+        if self._is_social_login or self._sqlite_token_key == "kirocli:social:token":
+            self._auth_type = AuthType.KIRO_DESKTOP
+            logger.info("Detected auth type: Kiro Desktop (social login token)")
+        elif self._client_id and self._client_secret:
             self._auth_type = AuthType.AWS_SSO_OIDC
             logger.info("Detected auth type: AWS SSO OIDC (kiro-cli)")
         else:
@@ -254,6 +261,11 @@ class KiroAuthManager:
                         # The SSO region (e.g., ap-southeast-1) is only used for OIDC token refresh.
                         self._sso_region = token_data['region']
                         logger.debug(f"SSO region from SQLite: {self._sso_region} (API stays at {self._region})")
+
+                    if self._sqlite_token_key == "kirocli:social:token" or token_data.get("provider"):
+                        self._is_social_login = True
+                        self._client_id = None
+                        self._client_secret = None
                     
                     # Load scopes if available
                     if 'scopes' in token_data:
@@ -271,14 +283,15 @@ class KiroAuthManager:
                         except Exception as e:
                             logger.warning(f"Failed to parse expires_at from SQLite: {e}")
             
-            # Load device registration (client_id, client_secret) - try all possible keys
+            # Load device registration (client_id, client_secret) - skip for social-login tokens
             registration_row = None
-            for key in SQLITE_REGISTRATION_KEYS:
-                cursor.execute("SELECT value FROM auth_kv WHERE key = ?", (key,))
-                registration_row = cursor.fetchone()
-                if registration_row:
-                    logger.debug(f"Loaded device registration from SQLite key: {key}")
-                    break
+            if not self._is_social_login:
+                for key in SQLITE_REGISTRATION_KEYS:
+                    cursor.execute("SELECT value FROM auth_kv WHERE key = ?", (key,))
+                    registration_row = cursor.fetchone()
+                    if registration_row:
+                        logger.debug(f"Loaded device registration from SQLite key: {key}")
+                        break
             
             if registration_row:
                 registration_data = json.loads(registration_row[0])
@@ -595,7 +608,7 @@ class KiroAuthManager:
             "User-Agent": f"KiroIDE-0.7.45-{self._fingerprint}",
         }
         
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=not ALLOW_UNTRUSTED_TLS) as client:
             response = await client.post(self._refresh_url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
@@ -712,7 +725,7 @@ class KiroAuthManager:
         logger.debug(f"AWS SSO OIDC refresh request: url={url}, sso_region={sso_region}, "
                      f"api_region={self._region}, client_id={self._client_id[:8]}...")
         
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=not ALLOW_UNTRUSTED_TLS) as client:
             response = await client.post(url, json=payload, headers=headers)
             
             # Log response details for debugging (especially on errors)
