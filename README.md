@@ -4,6 +4,16 @@
 
 **Proxy gateway for Kiro API (Amazon Q Developer / AWS CodeWhisperer)**
 
+## What Does This Fork Do?
+
+This fork focuses on practical compatibility and controllability improvements:
+
+- Request-driven thinking policy with Anthropic-style `high` and `max` levels
+- Safe default behavior with `FAKE_REASONING=false` support (no forced thinking unless requested)
+- Better auth compatibility for Anthropic clients (`x-api-key`, `api-key`, and bearer forms)
+- Social-login session stability for `kiro-cli` SQLite token flows
+- TLS behavior made configurable for trusted proxy/MITM environments
+
 [🇷🇺 Русский](docs/ru/README.md) • [🇨🇳 中文](docs/zh/README.md) • [🇪🇸 Español](docs/es/README.md) • [🇮🇩 Indonesia](docs/id/README.md) • [🇧🇷 Português](docs/pt/README.md) • [🇯🇵 日本語](docs/ja/README.md) • [🇰🇷 한국어](docs/ko/README.md)
 
 Made with ❤️ by [@Jwadow](https://github.com/jwadow)
