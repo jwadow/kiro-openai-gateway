@@ -38,7 +38,6 @@ from loguru import logger
 
 from kiro.config import (
     TOOL_DESCRIPTION_MAX_LENGTH,
-    FAKE_REASONING_ENABLED,
     FAKE_REASONING_MAX_TOKENS,
 )
 
@@ -285,10 +284,8 @@ def get_thinking_system_prompt_addition() -> str:
     not prompt injection attempts.
 
     Returns:
-        System prompt addition text (empty string if fake reasoning is disabled)
+        System prompt addition text
     """
-    if not FAKE_REASONING_ENABLED:
-        return ""
 
     return (
         "\n\n---\n"
@@ -338,7 +335,7 @@ def inject_thinking_tags(
     """
     Inject fake reasoning tags into content.
 
-    When FAKE_REASONING_ENABLED is True, this function prepends the special
+    This function prepends the special
     thinking mode tags to the content. These tags instruct the model to
     include its reasoning process in the response.
 
@@ -347,10 +344,8 @@ def inject_thinking_tags(
         thinking_max_tokens: Optional per-request thinking budget override
 
     Returns:
-        Content with thinking tags prepended (if enabled) or original content
+        Content with thinking tags prepended
     """
-    if not FAKE_REASONING_ENABLED:
-        return content
 
     max_tokens = (
         thinking_max_tokens
@@ -1446,14 +1441,15 @@ def build_kiro_payload(
             else tool_documentation.strip()
         )
 
-    # Add thinking mode legitimization to system prompt if enabled
-    thinking_system_addition = get_thinking_system_prompt_addition()
-    if thinking_system_addition:
-        full_system_prompt = (
-            full_system_prompt + thinking_system_addition
-            if full_system_prompt
-            else thinking_system_addition.strip()
-        )
+    # Add thinking mode legitimization only when per-request thinking is enabled
+    if inject_thinking:
+        thinking_system_addition = get_thinking_system_prompt_addition()
+        if thinking_system_addition:
+            full_system_prompt = (
+                full_system_prompt + thinking_system_addition
+                if full_system_prompt
+                else thinking_system_addition.strip()
+            )
 
     # Add truncation recovery legitimization to system prompt if enabled
     truncation_system_addition = get_truncation_recovery_system_addition()

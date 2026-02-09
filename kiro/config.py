@@ -99,6 +99,13 @@ SERVER_PORT: int = int(os.getenv("SERVER_PORT", str(DEFAULT_SERVER_PORT)))
 # API key for proxy access (clients must pass it in Authorization header)
 PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", "my-super-secret-password-123")
 
+# Optional additional API keys accepted by the gateway (comma-separated).
+# Useful for client migration while keeping one primary key.
+_proxy_aliases_raw: str = os.getenv("PROXY_API_KEY_ALIASES", "")
+PROXY_API_KEY_ALIASES: List[str] = [
+    value.strip() for value in _proxy_aliases_raw.split(",") if value.strip()
+]
+
 # ==================================================================================================
 # VPN/Proxy Settings for Kiro API Access
 # ==================================================================================================
@@ -428,15 +435,15 @@ def _warn_timeout_configuration():
 # with <thinking>...</thinking> blocks that we parse and convert to reasoning_content.
 # It works great, but it's a hack - hence "fake" reasoning.
 #
-# Default: true (enabled) - provides premium experience out of the box
+# Default: false (disabled unless explicitly enabled)
 _FAKE_REASONING_RAW: str = os.getenv("FAKE_REASONING", "").lower()
-# Default is True - if env var is not set or empty, enable fake reasoning
-FAKE_REASONING_ENABLED: bool = _FAKE_REASONING_RAW not in (
-    "false",
-    "0",
-    "no",
-    "disabled",
-    "off",
+# Default is False - if env var is not set or empty, keep native behavior
+FAKE_REASONING_ENABLED: bool = _FAKE_REASONING_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
 )
 
 # Maximum thinking length in tokens.
