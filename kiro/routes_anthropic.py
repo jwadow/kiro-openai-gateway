@@ -34,7 +34,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
 from loguru import logger
 
-from kiro.config import PROXY_API_KEY
+from kiro.config import PROXY_API_KEY, PROXY_API_KEY_ALIASES
 from kiro.models_anthropic import (
     AnthropicMessagesRequest,
     AnthropicMessagesResponse,
@@ -48,6 +48,7 @@ from kiro.streaming_anthropic import (
     stream_kiro_to_anthropic,
     collect_anthropic_response,
 )
+from kiro.thinking_policy import resolve_anthropic_policy
 from kiro.http_client import KiroHttpClient
 from kiro.utils import generate_conversation_id
 from kiro.tokenizer import count_tools_tokens
@@ -68,6 +69,7 @@ auth_header = APIKeyHeader(name="Authorization", auto_error=False)
 
 async def verify_anthropic_api_key(
     x_api_key: Optional[str] = Security(anthropic_api_key_header),
+    api_key: Optional[str] = Header(None, alias="api-key"),
     authorization: Optional[str] = Security(auth_header),
 ) -> bool:
     """
@@ -79,6 +81,7 @@ async def verify_anthropic_api_key(
 
     Args:
         x_api_key: Value from x-api-key header
+        api_key: Value from api-key header
         authorization: Value from Authorization header
 
     Returns:
@@ -87,13 +90,26 @@ async def verify_anthropic_api_key(
     Raises:
         HTTPException: 401 if key is invalid or missing
     """
+    valid_keys = {PROXY_API_KEY, *PROXY_API_KEY_ALIASES}
+
     # Check x-api-key first (Anthropic native)
-    if x_api_key and x_api_key == PROXY_API_KEY:
+    if isinstance(x_api_key, str) and x_api_key.strip() in valid_keys:
         return True
 
-    # Fall back to Authorization: Bearer
-    if authorization and authorization == f"Bearer {PROXY_API_KEY}":
+    # Fallback for providers sending api-key
+    if isinstance(api_key, str) and api_key.strip() in valid_keys:
         return True
+
+    # Fall back to Authorization: Bearer (or raw token)
+    if isinstance(authorization, str):
+        auth_value = authorization.strip()
+        token = (
+            auth_value[7:].strip()
+            if auth_value.lower().startswith("bearer ")
+            else auth_value
+        )
+        if token in valid_keys:
+            return True
 
     logger.warning("Access attempt with invalid API key (Anthropic endpoint)")
     raise HTTPException(
@@ -102,7 +118,7 @@ async def verify_anthropic_api_key(
             "type": "error",
             "error": {
                 "type": "authentication_error",
-                "message": "Invalid or missing API key. Use x-api-key header or Authorization: Bearer.",
+                "message": "Invalid or missing API key. Use x-api-key/api-key header or Authorization: Bearer.",
             },
         },
     )
@@ -273,6 +289,11 @@ async def messages(
     if auth_manager.auth_type == AuthType.KIRO_DESKTOP and auth_manager.profile_arn:
         profile_arn_for_payload = auth_manager.profile_arn
 
+    thinking_policy = resolve_anthropic_policy(
+        request_data.model_dump(exclude_none=True),
+        headers=request.headers,
+    )
+
     try:
         kiro_payload = anthropic_to_kiro(
             request_data,
@@ -387,6 +408,7 @@ async def messages(
                         model_cache,
                         auth_manager,
                         request_messages=messages_for_tokenizer,
+                        enable_thinking_parser=thinking_policy.inject_thinking,
                     ):
                         yield chunk
                 except GeneratorExit:
@@ -446,6 +468,7 @@ async def messages(
                 model_cache,
                 auth_manager,
                 request_messages=messages_for_tokenizer,
+                enable_thinking_parser=thinking_policy.inject_thinking,
             )
 
             await http_client.close()

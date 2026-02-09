@@ -52,6 +52,7 @@ from kiro.streaming_openai import (
     collect_stream_response,
     stream_with_first_token_retry,
 )
+from kiro.thinking_policy import resolve_openai_policy
 from kiro.http_client import KiroHttpClient
 from kiro.utils import generate_conversation_id
 
@@ -254,6 +255,11 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
     if auth_manager.auth_type == AuthType.KIRO_DESKTOP and auth_manager.profile_arn:
         profile_arn_for_payload = auth_manager.profile_arn
 
+    thinking_policy = resolve_openai_policy(
+        request_data.model_dump(exclude_none=True),
+        headers=request.headers,
+    )
+
     try:
         kiro_payload = build_kiro_payload(
             request_data,
@@ -372,6 +378,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                         auth_manager,
                         request_messages=messages_for_tokenizer,
                         request_tools=tools_for_tokenizer,
+                        enable_thinking_parser=thinking_policy.inject_thinking,
                     ):
                         yield chunk
                 except GeneratorExit:
@@ -429,6 +436,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                 auth_manager,
                 request_messages=messages_for_tokenizer,
                 request_tools=tools_for_tokenizer,
+                enable_thinking_parser=thinking_policy.inject_thinking,
             )
 
             await http_client.close()

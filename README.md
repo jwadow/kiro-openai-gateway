@@ -58,6 +58,8 @@ Made with ❤️ by [@Jwadow](https://github.com/jwadow)
 ### 🆕 Recent Improvements
 
 - **Request-driven thinking policy**: Thinking mode now follows incoming SDK hints (`off/high/max`, OpenAI effort levels, explicit budgets) with clear precedence: body > headers > defaults.
+- **Anthropic-native thinking levels**: Anthropic-compatible flow now supports request-level `high` and `max` thinking modes in a native way.
+- **Default no-thinking fallback**: Added safe default behavior where fake reasoning can be kept disabled (`FAKE_REASONING=false`) unless a request explicitly asks for thinking.
 - **Social-login session stability (kiro-cli SQLite)**: `kirocli:social:token` now stays on Kiro Desktop refresh flow, avoiding incorrect OIDC routing when device-registration rows also exist.
 - **Safer proxy TLS behavior**: Upstream certificate verification is secure by default, with optional `ALLOW_UNTRUSTED_TLS=true` only for trusted MITM/proxy environments.
 
