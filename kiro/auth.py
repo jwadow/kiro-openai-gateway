@@ -29,6 +29,7 @@ Manages the lifecycle of access tokens:
 
 import asyncio
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from enum import Enum
@@ -178,6 +179,15 @@ class KiroAuthManager:
         # Load credentials from JSON file if specified
         elif creds_file:
             self._load_credentials_from_file(creds_file)
+        
+        # Warn if region was not explicitly set via KIRO_REGION
+        env_region = os.getenv("KIRO_REGION", "")
+        if not env_region:
+            logger.warning(
+                f"KIRO_REGION not explicitly set in environment. "
+                f"Using region '{self._region}' (from credentials file or default). "
+                f"If you experience connection issues, try setting KIRO_REGION explicitly."
+            )
         
         # Determine auth type based on available credentials
         self._detect_auth_type()
@@ -341,13 +351,31 @@ class KiroAuthManager:
                 self._access_token = data['accessToken']
             if 'profileArn' in data:
                 self._profile_arn = data['profileArn']
+            
+            # Handle region from credentials file
+            # For AWS SSO OIDC (Enterprise Kiro IDE), the region in credentials file is the SSO region
+            # which may differ from the Kiro API region. We store it as _sso_region for OIDC token refresh.
             if 'region' in data:
-                self._region = data['region']
-                # Update URLs for new region
-                self._refresh_url = get_kiro_refresh_url(self._region)
-                self._api_host = get_kiro_api_host(self._region)
-                self._q_host = get_kiro_q_host(self._region)
-                logger.info(f"Region updated from credentials file: region={self._region}, api_host={self._api_host}, q_host={self._q_host}")
+                file_region = data['region']
+                # Store as SSO region for OIDC token refresh
+                self._sso_region = file_region
+                
+                # Check if user explicitly set KIRO_REGION in environment
+                # If not, use the region from credentials file for API calls too
+                env_region = os.getenv("KIRO_REGION", "")
+                if env_region and env_region != file_region:
+                    # User explicitly set a different region - use it for API, but warn
+                    logger.info(
+                        f"Using KIRO_REGION={env_region} for API calls. "
+                        f"SSO region from credentials file: {file_region} (used for token refresh)"
+                    )
+                else:
+                    # No explicit KIRO_REGION or same as file - use file region for everything
+                    self._region = file_region
+                    self._refresh_url = get_kiro_refresh_url(self._region)
+                    self._api_host = get_kiro_api_host(self._region)
+                    self._q_host = get_kiro_q_host(self._region)
+                    logger.info(f"Region updated from credentials file: region={self._region}, api_host={self._api_host}, q_host={self._q_host}")
             
             # Load clientIdHash and device registration for Enterprise Kiro IDE
             if 'clientIdHash' in data:
@@ -727,6 +755,24 @@ class KiroAuthManager:
                     error_desc = error_json.get("error_description", "no description")
                     logger.error(f"AWS SSO OIDC error details: error={error_code}, "
                                  f"description={error_desc}")
+                    
+                    # Provide actionable error messages
+                    if error_code == "invalid_grant":
+                        logger.error(
+                            "ACTION REQUIRED: Your refresh token has expired or been revoked. "
+                            "Please re-authenticate in Kiro IDE or run 'kiro-cli login'."
+                        )
+                    elif error_code == "invalid_client":
+                        logger.error(
+                            "ACTION REQUIRED: Client credentials are invalid. "
+                            "This may happen if your SSO session was revoked. "
+                            "Please re-authenticate in Kiro IDE."
+                        )
+                    elif error_code == "unauthorized_client":
+                        logger.error(
+                            "ACTION REQUIRED: Client is not authorized. "
+                            "Check if your AWS SSO permissions are still valid."
+                        )
                 except Exception:
                     pass  # Body wasn't JSON, already logged as text
                 response.raise_for_status()
