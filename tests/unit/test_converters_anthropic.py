@@ -1460,7 +1460,7 @@ class TestAnthropicToKiro:
             "kiro.converters_anthropic.get_model_id_for_kiro",
             return_value="claude-sonnet-4.5",
         ):
-            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+            with patch("kiro.thinking_policy.FAKE_REASONING_ENABLED", False):
                 result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
 
         print(f"Result: {result}")
@@ -1488,7 +1488,7 @@ class TestAnthropicToKiro:
             "kiro.converters_anthropic.get_model_id_for_kiro",
             return_value="claude-sonnet-4.5",
         ):
-            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+            with patch("kiro.thinking_policy.FAKE_REASONING_ENABLED", False):
                 result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
 
         print(f"Result: {result}")
@@ -1525,7 +1525,7 @@ class TestAnthropicToKiro:
             "kiro.converters_anthropic.get_model_id_for_kiro",
             return_value="claude-sonnet-4.5",
         ):
-            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+            with patch("kiro.thinking_policy.FAKE_REASONING_ENABLED", False):
                 result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
 
         print(f"Result: {result}")
@@ -1558,7 +1558,7 @@ class TestAnthropicToKiro:
             "kiro.converters_anthropic.get_model_id_for_kiro",
             return_value="claude-sonnet-4.5",
         ):
-            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+            with patch("kiro.thinking_policy.FAKE_REASONING_ENABLED", False):
                 result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
 
         print(f"Result: {result}")
@@ -1620,7 +1620,7 @@ class TestAnthropicToKiro:
             "kiro.converters_anthropic.get_model_id_for_kiro",
             return_value="claude-sonnet-4.5",
         ):
-            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+            with patch("kiro.thinking_policy.FAKE_REASONING_ENABLED", False):
                 result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
 
         print(f"Result: {result}")
@@ -1675,8 +1675,8 @@ class TestAnthropicToKiro:
             "kiro.converters_anthropic.get_model_id_for_kiro",
             return_value="claude-sonnet-4.5",
         ):
-            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", True):
-                with patch("kiro.converters_core.FAKE_REASONING_MAX_TOKENS", 4000):
+            with patch("kiro.thinking_policy.FAKE_REASONING_ENABLED", True):
+                with patch("kiro.thinking_policy.FAKE_REASONING_MAX_TOKENS", 4000):
                     result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
 
         print(f"Result: {result}")
@@ -1725,8 +1725,8 @@ class TestAnthropicToKiro:
             "kiro.converters_anthropic.get_model_id_for_kiro",
             return_value="claude-sonnet-4.5",
         ):
-            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", True):
-                with patch("kiro.converters_core.FAKE_REASONING_MAX_TOKENS", 4000):
+            with patch("kiro.thinking_policy.FAKE_REASONING_ENABLED", True):
+                with patch("kiro.thinking_policy.FAKE_REASONING_MAX_TOKENS", 4000):
                     result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
 
         print(f"Result: {result}")

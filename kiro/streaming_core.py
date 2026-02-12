@@ -32,12 +32,26 @@ to convert Kiro events to their respective SSE formats.
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Awaitable, Dict, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    Callable,
+    Awaitable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+)
 
 import httpx
 from loguru import logger
 
-from kiro.parsers import AwsEventStreamParser, parse_bracket_tool_calls, deduplicate_tool_calls
+from kiro.parsers import (
+    AwsEventStreamParser,
+    parse_bracket_tool_calls,
+    deduplicate_tool_calls,
+)
 from kiro.config import (
     FIRST_TOKEN_TIMEOUT,
     FIRST_TOKEN_MAX_RETRIES,
@@ -60,13 +74,14 @@ except ImportError:
 # Data Classes
 # ==================================================================================================
 
+
 @dataclass
 class KiroEvent:
     """
     Unified event from Kiro API stream.
-    
+
     This format is API-agnostic and can be converted to both OpenAI and Anthropic formats.
-    
+
     Attributes:
         type: Event type (content, thinking, tool_use, usage, context_usage, error)
         content: Text content (for content events)
@@ -77,6 +92,7 @@ class KiroEvent:
         is_first_thinking_chunk: Whether this is the first thinking chunk
         is_last_thinking_chunk: Whether this is the last thinking chunk
     """
+
     type: str
     content: Optional[str] = None
     thinking_content: Optional[str] = None
@@ -91,7 +107,7 @@ class KiroEvent:
 class StreamResult:
     """
     Result of collecting a complete stream response.
-    
+
     Attributes:
         content: Full text content
         thinking_content: Full thinking/reasoning content
@@ -99,6 +115,7 @@ class StreamResult:
         usage: Usage information
         context_usage_percentage: Context usage percentage from Kiro API
     """
+
     content: str = ""
     thinking_content: str = ""
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
@@ -108,6 +125,7 @@ class StreamResult:
 
 class FirstTokenTimeoutError(Exception):
     """Exception raised when first token timeout occurs."""
+
     pass
 
 
@@ -115,78 +133,84 @@ class FirstTokenTimeoutError(Exception):
 # Kiro Stream Parsing
 # ==================================================================================================
 
+
 async def parse_kiro_stream(
     response: httpx.Response,
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
-    enable_thinking_parser: bool = True
+    enable_thinking_parser: bool = True,
 ) -> AsyncGenerator[KiroEvent, None]:
     """
     Parses Kiro SSE stream and yields unified events.
-    
+
     This is the core parsing function that converts Kiro's AWS SSE format
     into unified KiroEvent objects that can be formatted for any API.
-    
+
     Args:
         response: HTTP response with data stream
         first_token_timeout: First token wait timeout (seconds)
         enable_thinking_parser: Whether to enable thinking block parsing
-    
+
     Yields:
         KiroEvent objects representing stream events
-    
+
     Raises:
         FirstTokenTimeoutError: If first token not received within timeout
     """
     parser = AwsEventStreamParser()
     first_token_received = False
-    
-    # Initialize thinking parser if fake reasoning is enabled
+
+    # Initialize thinking parser when enabled for this request
     thinking_parser: Optional[ThinkingParser] = None
-    if FAKE_REASONING_ENABLED and enable_thinking_parser:
+    if enable_thinking_parser:
         thinking_parser = ThinkingParser(handling_mode=FAKE_REASONING_HANDLING)
-        logger.debug(f"Thinking parser initialized with mode: {FAKE_REASONING_HANDLING}")
-    
+        logger.debug(
+            f"Thinking parser initialized with mode: {FAKE_REASONING_HANDLING}"
+        )
+
     try:
         # Create iterator for reading bytes
         byte_iterator = response.aiter_bytes()
-        
+
         # Wait for first chunk with timeout
         try:
             logger.debug(f"Waiting for first token (timeout={first_token_timeout}s)...")
             first_byte_chunk = await asyncio.wait_for(
-                byte_iterator.__anext__(),
-                timeout=first_token_timeout
+                byte_iterator.__anext__(), timeout=first_token_timeout
             )
             logger.debug("First token received")
         except asyncio.TimeoutError:
-            logger.warning(f"[FirstTokenTimeout] Model did not respond within {first_token_timeout}s")
-            raise FirstTokenTimeoutError(f"No response within {first_token_timeout} seconds")
+            logger.warning(
+                f"[FirstTokenTimeout] Model did not respond within {first_token_timeout}s"
+            )
+            raise FirstTokenTimeoutError(
+                f"No response within {first_token_timeout} seconds"
+            )
         except StopAsyncIteration:
             # Empty response - this is normal, just finish
             logger.debug("Empty response from Kiro API")
             return
-        
+
         # Process first chunk
         if debug_logger:
             debug_logger.log_raw_chunk(first_byte_chunk)
-        
+
         async for event in _process_chunk(parser, first_byte_chunk, thinking_parser):
             if event.type == "content" or event.type == "thinking":
                 first_token_received = True
             yield event
-        
+
         # Continue reading remaining chunks
         async for chunk in byte_iterator:
             if debug_logger:
                 debug_logger.log_raw_chunk(chunk)
-            
+
             async for event in _process_chunk(parser, chunk, thinking_parser):
                 yield event
-        
+
         # Finalize thinking parser and yield any remaining content
         if thinking_parser:
             final_result = thinking_parser.finalize()
-            
+
             if final_result.thinking_content:
                 processed_thinking = thinking_parser.process_for_output(
                     final_result.thinking_content,
@@ -200,21 +224,21 @@ async def parse_kiro_stream(
                         is_first_thinking_chunk=final_result.is_first_thinking_chunk,
                         is_last_thinking_chunk=final_result.is_last_thinking_chunk,
                     )
-            
+
             if final_result.regular_content:
                 yield KiroEvent(type="content", content=final_result.regular_content)
-            
+
             if thinking_parser.found_thinking_block:
                 logger.debug("Thinking block processing completed")
-        
+
         # Check bracket-style tool calls in accumulated content
         all_tool_calls = parser.get_tool_calls()
         # Note: bracket tool calls are checked by the caller using full content
-        
+
         # Yield tool calls if any
         for tc in all_tool_calls:
             yield KiroEvent(type="tool_use", tool_use=tc)
-            
+
     except FirstTokenTimeoutError:
         raise
     except GeneratorExit:
@@ -223,36 +247,38 @@ async def parse_kiro_stream(
     except Exception as e:
         error_type = type(e).__name__
         error_msg = str(e) if str(e) else "(empty message)"
-        logger.error(f"Error during stream parsing: [{error_type}] {error_msg}", exc_info=True)
+        logger.error(
+            f"Error during stream parsing: [{error_type}] {error_msg}", exc_info=True
+        )
         raise
 
 
 async def _process_chunk(
     parser: AwsEventStreamParser,
     chunk: bytes,
-    thinking_parser: Optional[ThinkingParser]
+    thinking_parser: Optional[ThinkingParser],
 ) -> AsyncGenerator[KiroEvent, None]:
     """
     Process a single chunk from Kiro stream.
-    
+
     Args:
         parser: AWS event stream parser
         chunk: Raw bytes chunk
         thinking_parser: Optional thinking parser for fake reasoning
-    
+
     Yields:
         KiroEvent objects
     """
     events = parser.feed(chunk)
-    
+
     for event in events:
         if event["type"] == "content":
             content = event["data"]
-            
+
             # Process through thinking parser if enabled
             if thinking_parser:
                 parse_result = thinking_parser.feed(content)
-                
+
                 # Yield thinking content if any
                 if parse_result.thinking_content:
                     processed_thinking = thinking_parser.process_for_output(
@@ -267,48 +293,55 @@ async def _process_chunk(
                             is_first_thinking_chunk=parse_result.is_first_thinking_chunk,
                             is_last_thinking_chunk=parse_result.is_last_thinking_chunk,
                         )
-                
+
                 # Yield regular content if any
                 if parse_result.regular_content:
-                    yield KiroEvent(type="content", content=parse_result.regular_content)
+                    yield KiroEvent(
+                        type="content", content=parse_result.regular_content
+                    )
             else:
                 # No thinking parser - pass through as-is
                 yield KiroEvent(type="content", content=content)
-        
+
         elif event["type"] == "usage":
             yield KiroEvent(type="usage", usage=event["data"])
-        
+
         elif event["type"] == "context_usage":
-            yield KiroEvent(type="context_usage", context_usage_percentage=event["data"])
+            yield KiroEvent(
+                type="context_usage", context_usage_percentage=event["data"]
+            )
 
 
 # ==================================================================================================
 # Full Response Collection
 # ==================================================================================================
 
+
 async def collect_stream_to_result(
     response: httpx.Response,
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
-    enable_thinking_parser: bool = True
+    enable_thinking_parser: bool = True,
 ) -> StreamResult:
     """
     Collects full response from Kiro stream.
-    
+
     This function consumes the entire stream and returns a StreamResult
     with all accumulated data.
-    
+
     Args:
         response: HTTP response with stream
         first_token_timeout: First token wait timeout
         enable_thinking_parser: Whether to enable thinking block parsing
-    
+
     Returns:
         StreamResult with full content, thinking, tool calls, and usage
     """
     result = StreamResult()
     full_content_for_bracket_tools = ""
-    
-    async for event in parse_kiro_stream(response, first_token_timeout, enable_thinking_parser):
+
+    async for event in parse_kiro_stream(
+        response, first_token_timeout, enable_thinking_parser
+    ):
         if event.type == "content" and event.content:
             result.content += event.content
             full_content_for_bracket_tools += event.content
@@ -319,14 +352,18 @@ async def collect_stream_to_result(
             result.tool_calls.append(event.tool_use)
         elif event.type == "usage" and event.usage:
             result.usage = event.usage
-        elif event.type == "context_usage" and event.context_usage_percentage is not None:
+        elif (
+            event.type == "context_usage" and event.context_usage_percentage is not None
+        ):
             result.context_usage_percentage = event.context_usage_percentage
-    
+
     # Check for bracket-style tool calls in full content
     bracket_tool_calls = parse_bracket_tool_calls(full_content_for_bracket_tools)
     if bracket_tool_calls:
-        result.tool_calls = deduplicate_tool_calls(result.tool_calls + bracket_tool_calls)
-    
+        result.tool_calls = deduplicate_tool_calls(
+            result.tool_calls + bracket_tool_calls
+        )
+
     return result
 
 
@@ -334,21 +371,22 @@ async def collect_stream_to_result(
 # Token Counting Utilities
 # ==================================================================================================
 
+
 def calculate_tokens_from_context_usage(
     context_usage_percentage: Optional[float],
     completion_tokens: int,
     model_cache: "ModelInfoCache",
-    model: str
+    model: str,
 ) -> Tuple[int, int, str, str]:
     """
     Calculate token counts from Kiro's context usage percentage.
-    
+
     Args:
         context_usage_percentage: Context usage percentage from Kiro API
         completion_tokens: Number of completion tokens (counted via tiktoken)
         model_cache: Model cache for getting max input tokens
         model: Model name
-    
+
     Returns:
         Tuple of (prompt_tokens, total_tokens, prompt_source, total_source)
     """
@@ -357,7 +395,7 @@ def calculate_tokens_from_context_usage(
         total_tokens = int((context_usage_percentage / 100) * max_input_tokens)
         prompt_tokens = max(0, total_tokens - completion_tokens)
         return prompt_tokens, total_tokens, "subtraction", "API Kiro"
-    
+
     # Fallback: no context usage data
     return 0, completion_tokens, "unknown", "tiktoken"
 
@@ -365,6 +403,7 @@ def calculate_tokens_from_context_usage(
 # ==================================================================================================
 # First Token Retry Logic
 # ==================================================================================================
+
 
 async def stream_with_first_token_retry(
     make_request: Callable[[], Awaitable[httpx.Response]],
@@ -376,13 +415,13 @@ async def stream_with_first_token_retry(
 ) -> AsyncGenerator[str, None]:
     """
     Generic streaming with automatic retry on first token timeout.
-    
+
     If model doesn't respond within first_token_timeout seconds,
     request is cancelled and a new one is made. Maximum max_retries attempts.
-    
+
     This is seamless for user - they just see a delay,
     but eventually get a response (or error after all attempts).
-    
+
     Args:
         make_request: Function to create new HTTP request (returns httpx.Response)
         stream_processor: Function that processes response and yields SSE strings.
@@ -395,13 +434,13 @@ async def stream_with_first_token_retry(
         on_all_retries_failed: Optional callback to create exception when all retries fail.
                               Receives (max_retries, timeout), returns Exception.
                               If None, raises generic Exception.
-    
+
     Yields:
         Strings in SSE format (format depends on stream_processor)
-    
+
     Raises:
         Exception from on_http_error or on_all_retries_failed callbacks
-    
+
     Example:
         >>> async def make_req():
         ...     return await http_client.request_with_retry("POST", url, payload, stream=True)
@@ -412,79 +451,87 @@ async def stream_with_first_token_retry(
         ...     print(chunk)
     """
     last_error: Optional[Exception] = None
-    
+
     for attempt in range(max_retries):
         response: Optional[httpx.Response] = None
         try:
             # Make request
             if attempt > 0:
-                logger.warning(f"Retry attempt {attempt + 1}/{max_retries} after first token timeout")
-            
+                logger.warning(
+                    f"Retry attempt {attempt + 1}/{max_retries} after first token timeout"
+                )
+
             response = await make_request()
-            
+
             if response.status_code != 200:
                 # Error from API - close response and raise exception
                 try:
                     error_content = await response.aread()
-                    error_text = error_content.decode('utf-8', errors='replace')
+                    error_text = error_content.decode("utf-8", errors="replace")
                 except Exception:
                     error_text = "Unknown error"
-                
+
                 try:
                     await response.aclose()
                 except Exception:
                     pass
-                
-                logger.error(f"Error from Kiro API: {response.status_code} - {error_text}")
-                
+
+                logger.error(
+                    f"Error from Kiro API: {response.status_code} - {error_text}"
+                )
+
                 if on_http_error:
                     raise on_http_error(response.status_code, error_text)
                 else:
-                    raise Exception(f"Upstream API error ({response.status_code}): {error_text}")
-            
+                    raise Exception(
+                        f"Upstream API error ({response.status_code}): {error_text}"
+                    )
+
             # Try to stream with first token timeout
             async for chunk in stream_processor(response):
                 yield chunk
-            
+
             # Successfully completed - exit
             return
-            
+
         except FirstTokenTimeoutError as e:
             last_error = e
             logger.warning(
                 f"[FirstTokenTimeout] Attempt {attempt + 1}/{max_retries} failed - "
                 f"model did not respond within {first_token_timeout}s"
             )
-            
+
             # Close current response if open
             if response:
                 try:
                     await response.aclose()
                 except Exception:
                     pass
-            
+
             # Continue to next attempt
             continue
-            
+
         except Exception as e:
             # Other errors - no retry, propagate
             # Use positional argument to avoid loguru interpreting curly braces in error message as format placeholders
             # f-string with repr() doesn't work because loguru still sees {type} inside the string
             error_msg = str(e) if str(e) else "(empty message)"
-            logger.error("Unexpected error during streaming: {}", error_msg, exc_info=True)
+            logger.error(
+                "Unexpected error during streaming: {}", error_msg, exc_info=True
+            )
             if response:
                 try:
                     await response.aclose()
                 except Exception:
                     pass
             raise
-    
+
     # All attempts exhausted - raise error
     logger.error(
         f"[FirstTokenTimeout] All {max_retries} attempts exhausted - "
         f"model never responded within {first_token_timeout}s per attempt"
     )
-    
+
     if on_all_retries_failed:
         raise on_all_retries_failed(max_retries, first_token_timeout)
     else:

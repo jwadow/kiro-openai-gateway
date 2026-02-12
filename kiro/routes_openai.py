@@ -47,8 +47,17 @@ from kiro.auth import KiroAuthManager, AuthType
 from kiro.cache import ModelInfoCache
 from kiro.model_resolver import ModelResolver
 from kiro.converters_openai import build_kiro_payload
-from kiro.streaming_openai import stream_kiro_to_openai, collect_stream_response, stream_with_first_token_retry
+from kiro.streaming_openai import (
+    stream_kiro_to_openai,
+    collect_stream_response,
+    stream_with_first_token_retry,
+)
+from kiro.thinking_policy import resolve_openai_policy
 from kiro.http_client import KiroHttpClient
+from kiro.reactive_retry import (
+    read_response_error_text,
+    retry_on_improperly_formed_request,
+)
 from kiro.utils import generate_conversation_id
 
 # Import debug_logger
@@ -65,15 +74,15 @@ api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 async def verify_api_key(auth_header: str = Security(api_key_header)) -> bool:
     """
     Verify API key in Authorization header.
-    
+
     Expects format: "Bearer {PROXY_API_KEY}"
-    
+
     Args:
         auth_header: Authorization header value
-    
+
     Returns:
         True if key is valid
-    
+
     Raises:
         HTTPException: 401 if key is invalid or missing
     """
@@ -91,14 +100,14 @@ router = APIRouter()
 async def root():
     """
     Health check endpoint.
-    
+
     Returns:
         Status and application version
     """
     return {
         "status": "ok",
         "message": "Kiro Gateway is running",
-        "version": APP_VERSION
+        "version": APP_VERSION,
     }
 
 
@@ -106,47 +115,48 @@ async def root():
 async def health():
     """
     Detailed health check.
-    
+
     Returns:
         Status, timestamp and version
     """
     return {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": APP_VERSION
+        "version": APP_VERSION,
     }
 
-@router.get("/v1/models", response_model=ModelList, dependencies=[Depends(verify_api_key)])
+
+@router.get(
+    "/v1/models", response_model=ModelList, dependencies=[Depends(verify_api_key)]
+)
 async def get_models(request: Request):
     """
     Return list of available models.
-    
+
     Models are loaded at startup (blocking) and cached.
     This endpoint returns the cached list.
-    
+
     Args:
         request: FastAPI Request for accessing app.state
-    
+
     Returns:
         ModelList with available models in consistent format (with dots)
     """
     logger.info("Request to /v1/models")
-    
+
     model_resolver: ModelResolver = request.app.state.model_resolver
-    
+
     # Get all available models from resolver (cache + hidden models)
     available_model_ids = model_resolver.get_available_models()
-    
+
     # Build OpenAI-compatible model list
     openai_models = [
         OpenAIModel(
-            id=model_id,
-            owned_by="anthropic",
-            description="Claude model via Kiro API"
+            id=model_id, owned_by="anthropic", description="Claude model via Kiro API"
         )
         for model_id in available_model_ids
     ]
-    
+
     return ModelList(data=openai_models)
 
 
@@ -154,38 +164,43 @@ async def get_models(request: Request):
 async def chat_completions(request: Request, request_data: ChatCompletionRequest):
     """
     Chat completions endpoint - compatible with OpenAI API.
-    
+
     Accepts requests in OpenAI format and translates them to Kiro API.
     Supports streaming and non-streaming modes.
-    
+
     Args:
         request: FastAPI Request for accessing app.state
         request_data: Request in OpenAI ChatCompletionRequest format
-    
+
     Returns:
         StreamingResponse for streaming mode
         JSONResponse for non-streaming mode
-    
+
     Raises:
         HTTPException: On validation or API errors
     """
-    logger.info(f"Request to /v1/chat/completions (model={request_data.model}, stream={request_data.stream})")
-    
+    logger.info(
+        f"Request to /v1/chat/completions (model={request_data.model}, stream={request_data.stream})"
+    )
+
     auth_manager: KiroAuthManager = request.app.state.auth_manager
     model_cache: ModelInfoCache = request.app.state.model_cache
-    
+
     # Note: prepare_new_request() and log_request_body() are now called by DebugLoggerMiddleware
     # This ensures debug logging works even for requests that fail Pydantic validation (422 errors)
-    
+
     # Check for truncation recovery opportunities
     from kiro.truncation_state import get_tool_truncation, get_content_truncation
-    from kiro.truncation_recovery import generate_truncation_tool_result, generate_truncation_user_message
+    from kiro.truncation_recovery import (
+        generate_truncation_tool_result,
+        generate_truncation_user_message,
+    )
     from kiro.models_openai import ChatMessage
-    
+
     modified_messages = []
     tool_results_modified = 0
     content_notices_added = 0
-    
+
     for msg in request_data.messages:
         # Check if this is a tool_result for a truncated tool call
         if msg.role == "tool" and msg.tool_call_id:
@@ -195,18 +210,20 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                 synthetic = generate_truncation_tool_result(
                     tool_name=truncation_info.tool_name,
                     tool_use_id=msg.tool_call_id,
-                    truncation_info=truncation_info.truncation_info
+                    truncation_info=truncation_info.truncation_info,
                 )
                 # Prepend truncation notice to original content
                 modified_content = f"{synthetic['content']}\n\n---\n\nOriginal tool result:\n{msg.content}"
-                
+
                 # Create NEW ChatMessage object (Pydantic immutability)
                 modified_msg = msg.model_copy(update={"content": modified_content})
                 modified_messages.append(modified_msg)
                 tool_results_modified += 1
-                logger.debug(f"Modified tool_result for {msg.tool_call_id} to include truncation notice")
+                logger.debug(
+                    f"Modified tool_result for {msg.tool_call_id} to include truncation notice"
+                )
                 continue  # Skip normal append since we already added modified version
-        
+
         # Check if this is an assistant message with truncated content
         if msg.role == "assistant" and msg.content and isinstance(msg.content, str):
             truncation_info = get_content_truncation(msg.content)
@@ -215,53 +232,68 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                 modified_messages.append(msg)
                 # Then add synthetic user message about truncation
                 synthetic_user_msg = ChatMessage(
-                    role="user",
-                    content=generate_truncation_user_message()
+                    role="user", content=generate_truncation_user_message()
                 )
                 modified_messages.append(synthetic_user_msg)
                 content_notices_added += 1
-                logger.debug(f"Added truncation notice after assistant message (hash: {truncation_info.message_hash})")
+                logger.debug(
+                    f"Added truncation notice after assistant message (hash: {truncation_info.message_hash})"
+                )
                 continue  # Skip normal append since we already added it
-        
+
         modified_messages.append(msg)
-    
+
     if tool_results_modified > 0 or content_notices_added > 0:
         request_data.messages = modified_messages
-        logger.info(f"Truncation recovery: modified {tool_results_modified} tool_result(s), added {content_notices_added} content notice(s)")
-    
+        logger.info(
+            f"Truncation recovery: modified {tool_results_modified} tool_result(s), added {content_notices_added} content notice(s)"
+        )
+
     # Generate conversation ID for Kiro API (random UUID, not used for tracking)
     conversation_id = generate_conversation_id()
-    
+
     # Build payload for Kiro
     # profileArn is only needed for Kiro Desktop auth
     # AWS SSO OIDC (Builder ID) users don't need profileArn and it causes 403 if sent
     profile_arn_for_payload = ""
     if auth_manager.auth_type == AuthType.KIRO_DESKTOP and auth_manager.profile_arn:
         profile_arn_for_payload = auth_manager.profile_arn
-    
+
+    thinking_policy = resolve_openai_policy(
+        request_data.model_dump(exclude_none=True),
+        headers=request.headers,
+    )
+
     try:
         kiro_payload = build_kiro_payload(
             request_data,
             conversation_id,
-            profile_arn_for_payload
+            profile_arn_for_payload,
+            headers=request.headers,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    
+        logger.warning(f"Payload conversion validation failed: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail="Request could not be processed. Please retry.",
+        )
+
     # Log Kiro payload
     try:
-        kiro_request_body = json.dumps(kiro_payload, ensure_ascii=False, indent=2).encode('utf-8')
+        kiro_request_body = json.dumps(
+            kiro_payload, ensure_ascii=False, indent=2
+        ).encode("utf-8")
         if debug_logger:
             debug_logger.log_kiro_request_body(kiro_request_body)
     except Exception as e:
         logger.warning(f"Failed to log Kiro request: {e}")
-    
+
     # Create HTTP client with retry logic
     # For streaming: use per-request client to avoid CLOSE_WAIT leak on VPN disconnect (issue #54)
     # For non-streaming: use shared client for connection pooling
     url = f"{auth_manager.api_host}/generateAssistantResponse"
     logger.debug(f"Kiro API URL: {url}")
-    
+
     if request_data.stream:
         # Streaming mode: per-request client prevents orphaned connections
         # when network interface changes (VPN disconnect/reconnect)
@@ -275,60 +307,96 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         # Important: we wait for Kiro response BEFORE returning StreamingResponse,
         # so that 200 OK means Kiro accepted the request and started responding
         response = await http_client.request_with_retry(
-            "POST",
-            url,
-            kiro_payload,
-            stream=True
+            "POST", url, kiro_payload, stream=True
         )
-        
+
         if response.status_code != 200:
-            try:
-                error_content = await response.aread()
-            except Exception:
-                error_content = b"Unknown error"
-            
-            await http_client.close()
-            error_text = error_content.decode('utf-8', errors='replace')
-            
-            # Try to parse JSON response from Kiro to extract error message
-            error_message = error_text
-            try:
-                error_json = json.loads(error_text)
-                # Enhance Kiro API errors with user-friendly messages
-                from kiro.kiro_errors import enhance_kiro_error
-                error_info = enhance_kiro_error(error_json)
-                error_message = error_info.user_message
-                # Log original error for debugging
-                logger.debug(f"Original Kiro error: {error_info.original_message} (reason: {error_info.reason})")
-            except (json.JSONDecodeError, KeyError):
-                pass
-            
-            # Log access log for error (before flush, so it gets into app_logs)
-            logger.warning(
-                f"HTTP {response.status_code} - POST /v1/chat/completions - {error_message[:100]}"
+            error_text = await read_response_error_text(response)
+
+            def _rebuild_payload_for_retry() -> dict:
+                return build_kiro_payload(
+                    request_data,
+                    generate_conversation_id(),
+                    profile_arn_for_payload,
+                    headers=request.headers,
+                )
+
+            def _create_retry_http_client() -> KiroHttpClient:
+                if request_data.stream:
+                    return KiroHttpClient(auth_manager, shared_client=None)
+                return KiroHttpClient(
+                    auth_manager,
+                    shared_client=request.app.state.http_client,
+                )
+
+            retry_result = await retry_on_improperly_formed_request(
+                response=response,
+                error_text=error_text,
+                http_client=http_client,
+                request_url=url,
+                rebuild_payload=_rebuild_payload_for_retry,
+                new_http_client_factory=_create_retry_http_client,
             )
-            
-            # Flush debug logs on error ("errors" mode)
-            if debug_logger:
-                debug_logger.flush_on_error(response.status_code, error_message)
-            
-            # Return error in OpenAI API format
-            return JSONResponse(
-                status_code=response.status_code,
-                content={
-                    "error": {
-                        "message": error_message,
-                        "type": "kiro_api_error",
-                        "code": response.status_code
-                    }
-                }
-            )
-        
+            response = retry_result.response
+            http_client = retry_result.http_client
+            error_text = retry_result.error_text
+
+            if response.status_code != 200:
+                await http_client.close()
+
+                # Try to parse JSON response from Kiro to extract error message
+                error_message = error_text
+                try:
+                    error_json = json.loads(error_text)
+                    # Enhance Kiro API errors with user-friendly messages
+                    from kiro.kiro_errors import enhance_kiro_error
+
+                    error_info = enhance_kiro_error(error_json)
+                    error_message = error_info.user_message
+                    # Log original error for debugging
+                    logger.debug(
+                        f"Original Kiro error: {error_info.original_message} (reason: {error_info.reason})"
+                    )
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+                # Log access log for error (before flush, so it gets into app_logs)
+                logger.warning(
+                    f"HTTP {response.status_code} - POST /v1/chat/completions - {error_message[:100]}"
+                )
+
+                # Flush debug logs on error ("errors" mode)
+                if debug_logger:
+                    debug_logger.flush_on_error(response.status_code, error_message)
+
+                # Return error in OpenAI API format
+                return JSONResponse(
+                    status_code=response.status_code,
+                    content={
+                        "error": {
+                            "message": error_message,
+                            "type": "kiro_api_error",
+                            "code": response.status_code,
+                        }
+                    },
+                )
+
         # Prepare data for fallback token counting
         # Convert Pydantic models to dicts for tokenizer
         messages_for_tokenizer = [msg.model_dump() for msg in request_data.messages]
-        tools_for_tokenizer = [tool.model_dump() for tool in request_data.tools] if request_data.tools else None
-        
+        tools_for_tokenizer = (
+            [tool.model_dump() for tool in request_data.tools]
+            if request_data.tools
+            else None
+        )
+
+        if http_client.client is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Internal error: HTTP client is not initialized",
+            )
+        client = http_client.client
+
         if request_data.stream:
             # Streaming mode
             async def stream_wrapper():
@@ -336,19 +404,22 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                 client_disconnected = False
                 try:
                     async for chunk in stream_kiro_to_openai(
-                        http_client.client,
+                        client,
                         response,
                         request_data.model,
                         model_cache,
                         auth_manager,
                         request_messages=messages_for_tokenizer,
-                        request_tools=tools_for_tokenizer
+                        request_tools=tools_for_tokenizer,
+                        enable_thinking_parser=thinking_policy.inject_thinking,
                     ):
                         yield chunk
                 except GeneratorExit:
                     # Client disconnected - this is normal
                     client_disconnected = True
-                    logger.debug("Client disconnected during streaming (GeneratorExit in routes)")
+                    logger.debug(
+                        "Client disconnected during streaming (GeneratorExit in routes)"
+                    )
                 except Exception as e:
                     streaming_error = e
                     # Try to send [DONE] to client before finishing
@@ -363,45 +434,57 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                     # Log access log for streaming (success or error)
                     if streaming_error:
                         error_type = type(streaming_error).__name__
-                        error_msg = str(streaming_error) if str(streaming_error) else "(empty message)"
-                        logger.error(f"HTTP 500 - POST /v1/chat/completions (streaming) - [{error_type}] {error_msg[:100]}")
+                        error_msg = (
+                            str(streaming_error)
+                            if str(streaming_error)
+                            else "(empty message)"
+                        )
+                        logger.error(
+                            f"HTTP 500 - POST /v1/chat/completions (streaming) - [{error_type}] {error_msg[:100]}"
+                        )
                     elif client_disconnected:
-                        logger.info(f"HTTP 200 - POST /v1/chat/completions (streaming) - client disconnected")
+                        logger.info(
+                            f"HTTP 200 - POST /v1/chat/completions (streaming) - client disconnected"
+                        )
                     else:
-                        logger.info(f"HTTP 200 - POST /v1/chat/completions (streaming) - completed")
+                        logger.info(
+                            f"HTTP 200 - POST /v1/chat/completions (streaming) - completed"
+                        )
                     # Write debug logs AFTER streaming completes
                     if debug_logger:
                         if streaming_error:
                             debug_logger.flush_on_error(500, str(streaming_error))
                         else:
                             debug_logger.discard_buffers()
-            
+
             return StreamingResponse(stream_wrapper(), media_type="text/event-stream")
-        
+
         else:
-            
             # Non-streaming mode - collect entire response
             openai_response = await collect_stream_response(
-                http_client.client,
+                client,
                 response,
                 request_data.model,
                 model_cache,
                 auth_manager,
                 request_messages=messages_for_tokenizer,
-                request_tools=tools_for_tokenizer
+                request_tools=tools_for_tokenizer,
+                enable_thinking_parser=thinking_policy.inject_thinking,
             )
-            
+
             await http_client.close()
-            
+
             # Log access log for non-streaming success
-            logger.info(f"HTTP 200 - POST /v1/chat/completions (non-streaming) - completed")
-            
+            logger.info(
+                f"HTTP 200 - POST /v1/chat/completions (non-streaming) - completed"
+            )
+
             # Write debug logs after non-streaming request completes
             if debug_logger:
                 debug_logger.discard_buffers()
-            
+
             return JSONResponse(content=openai_response)
-    
+
     except HTTPException as e:
         await http_client.close()
         # Log access log for HTTP error

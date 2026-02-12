@@ -4,6 +4,19 @@
 
 **Proxy gateway for Kiro API (Amazon Q Developer / AWS CodeWhisperer)**
 
+## What Does This Fork Do?
+
+This fork focuses on practical compatibility and controllability improvements:
+
+- Request-driven thinking policy with Anthropic-style `high`/`max` support
+- Stronger auth/session compatibility for `kiro-cli` SQLite social-token flows
+- Configurable malformed-request protections for vague upstream `Improperly formed request` errors
+- Payload/tool/schema/queued-notice hardening with operator-controlled toggles
+- Expanded streaming/retry/error handling stability for real-world clients
+- Large unit-test expansion for compatibility regressions and edge cases
+
+Full fork diff and rationale: [`FORK_CHANGELOG.md`](fork-docs/FORK_CHANGELOG.md)
+
 [🇷🇺 Русский](docs/ru/README.md) • [🇨🇳 中文](docs/zh/README.md) • [🇪🇸 Español](docs/es/README.md) • [🇮🇩 Indonesia](docs/id/README.md) • [🇧🇷 Português](docs/pt/README.md) • [🇯🇵 日本語](docs/ja/README.md) • [🇰🇷 한국어](docs/ko/README.md)
 
 Made with ❤️ by [@Jwadow](https://github.com/jwadow)
@@ -60,6 +73,14 @@ Made with ❤️ by [@Jwadow](https://github.com/jwadow)
 | 🔄 **Retry Logic** | Automatic retries on errors (403, 429, 5xx) |
 | 📋 **Extended model list** | Including versioned models |
 | 🔐 **Smart token management** | Automatic refresh before expiration |
+
+### 🆕 Recent Improvements
+
+- **Request-driven thinking policy**: Thinking mode now follows incoming SDK hints (`off/high/max`, OpenAI effort levels, explicit budgets) with clear precedence: body > headers > defaults.
+- **Anthropic-native thinking levels**: Anthropic-compatible flow now supports request-level `high` and `max` thinking modes in a native way.
+- **Default no-thinking fallback**: Added safe default behavior where fake reasoning can be kept disabled (`FAKE_REASONING=false`) unless a request explicitly asks for thinking.
+- **Social-login session stability (kiro-cli SQLite)**: `kirocli:social:token` now stays on Kiro Desktop refresh flow, avoiding incorrect OIDC routing when device-registration rows also exist.
+- **Safer proxy TLS behavior**: Upstream certificate verification is secure by default, with optional `ALLOW_UNTRUSTED_TLS=true` only for trusted MITM/proxy environments.
 
 ---
 

@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 class ModelResolution:
     """
     Result of model resolution.
-    
+
     Attributes:
         internal_id: ID to send to Kiro API
         source: Resolution source - "cache", "hidden", or "passthrough"
@@ -53,6 +53,7 @@ class ModelResolution:
         normalized: Model name after normalization
         is_verified: True if found in cache/hidden, False if passthrough
     """
+
     internal_id: str
     source: str
     original_request: str
@@ -63,7 +64,7 @@ class ModelResolution:
 def normalize_model_name(name: str) -> str:
     """
     Normalize client model name to Kiro format.
-    
+
     Transformations applied:
     1. claude-haiku-4-5 → claude-haiku-4.5 (dash to dot for minor version)
     2. claude-haiku-4-5-20251001 → claude-haiku-4.5 (strip date suffix)
@@ -72,13 +73,13 @@ def normalize_model_name(name: str) -> str:
     5. claude-3-7-sonnet → claude-3.7-sonnet (legacy format normalization)
     6. claude-3-7-sonnet-20250219 → claude-3.7-sonnet (legacy + strip date)
     7. claude-4.5-opus-high → claude-opus-4.5 (inverted format with suffix)
-    
+
     Args:
         name: External model name from client
-    
+
     Returns:
         Normalized model name in Kiro format
-    
+
     Examples:
         >>> normalize_model_name("claude-haiku-4-5-20251001")
         'claude-haiku-4.5'
@@ -103,61 +104,71 @@ def normalize_model_name(name: str) -> str:
     """
     if not name:
         return name
-    
+
+    # Strip provider prefix (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6")
+    if "/" in name:
+        name = name.split("/", 1)[1]
+
     # Lowercase for consistent matching
     name_lower = name.lower()
-    
+
     # Pattern 1: Standard format - claude-{family}-{major}-{minor}(-{suffix})?
     # Matches: claude-haiku-4-5, claude-haiku-4-5-20251001, claude-haiku-4-5-latest
     # Groups: (claude-haiku-4), (5), optional suffix
     # IMPORTANT: Minor version is 1-2 digits only! 8-digit dates should NOT match here.
-    standard_pattern = r'^(claude-(?:haiku|sonnet|opus)-\d+)-(\d{1,2})(?:-(?:\d{8}|latest|\d+))?$'
+    standard_pattern = (
+        r"^(claude-(?:haiku|sonnet|opus)-\d+)-(\d{1,2})(?:-(?:\d{8}|latest|\d+))?$"
+    )
     match = re.match(standard_pattern, name_lower)
     if match:
         base = match.group(1)  # claude-haiku-4
         minor = match.group(2)  # 5
         return f"{base}.{minor}"  # claude-haiku-4.5
-    
+
     # Pattern 2: Standard format without minor - claude-{family}-{major}(-{date})?
     # Matches: claude-sonnet-4, claude-sonnet-4-20250514
     # Groups: (claude-sonnet-4), optional date
-    no_minor_pattern = r'^(claude-(?:haiku|sonnet|opus)-\d+)(?:-\d{8})?$'
+    no_minor_pattern = r"^(claude-(?:haiku|sonnet|opus)-\d+)(?:-\d{8})?$"
     match = re.match(no_minor_pattern, name_lower)
     if match:
         return match.group(1)  # claude-sonnet-4
-    
+
     # Pattern 3: Legacy format - claude-{major}-{minor}-{family}(-{suffix})?
     # Matches: claude-3-7-sonnet, claude-3-7-sonnet-20250219
     # Groups: (claude), (3), (7), (sonnet), optional suffix
-    legacy_pattern = r'^(claude)-(\d+)-(\d+)-(haiku|sonnet|opus)(?:-(?:\d{8}|latest|\d+))?$'
+    legacy_pattern = (
+        r"^(claude)-(\d+)-(\d+)-(haiku|sonnet|opus)(?:-(?:\d{8}|latest|\d+))?$"
+    )
     match = re.match(legacy_pattern, name_lower)
     if match:
         prefix = match.group(1)  # claude
-        major = match.group(2)   # 3
-        minor = match.group(3)   # 7
+        major = match.group(2)  # 3
+        minor = match.group(3)  # 7
         family = match.group(4)  # sonnet
         return f"{prefix}-{major}.{minor}-{family}"  # claude-3.7-sonnet
-    
+
     # Pattern 4: Already normalized with dot but has date suffix
     # Matches: claude-haiku-4.5-20251001, claude-3.7-sonnet-20250219
-    dot_with_date_pattern = r'^(claude-(?:\d+\.\d+-)?(?:haiku|sonnet|opus)(?:-\d+\.\d+)?)-\d{8}$'
+    dot_with_date_pattern = (
+        r"^(claude-(?:\d+\.\d+-)?(?:haiku|sonnet|opus)(?:-\d+\.\d+)?)-\d{8}$"
+    )
     match = re.match(dot_with_date_pattern, name_lower)
     if match:
         return match.group(1)
-    
+
     # Pattern 5: Inverted format with suffix - claude-{major}.{minor}-{family}-{suffix}
     # Matches: claude-4.5-opus-high, claude-4.5-sonnet-low, claude-4.5-opus-high-thinking
     # Convert to: claude-{family}-{major}.{minor}
     # Groups: (4), (5), (opus), any suffix
     # NOTE: This pattern REQUIRES a suffix to avoid matching already-normalized formats like claude-3.7-sonnet
-    inverted_with_suffix_pattern = r'^claude-(\d+)\.(\d+)-(haiku|sonnet|opus)-(.+)$'
+    inverted_with_suffix_pattern = r"^claude-(\d+)\.(\d+)-(haiku|sonnet|opus)-(.+)$"
     match = re.match(inverted_with_suffix_pattern, name_lower)
     if match:
-        major = match.group(1)   # 4
-        minor = match.group(2)   # 5
+        major = match.group(1)  # 4
+        minor = match.group(2)  # 5
         family = match.group(3)  # opus
         return f"claude-{family}-{major}.{minor}"  # claude-opus-4.5
-    
+
     # No transformation needed - return as-is (preserving original case for passthrough)
     return name
 
@@ -165,20 +176,20 @@ def normalize_model_name(name: str) -> str:
 def get_model_id_for_kiro(model_name: str, hidden_models: Dict[str, str]) -> str:
     """
     Get the model ID to send to Kiro API.
-    
+
     This is a simple helper for converters that don't have access to the full
     ModelResolver. It normalizes the name and checks hidden models.
-    
+
     For hidden models (like claude-3.7-sonnet), returns the internal Kiro ID.
     For regular models, returns the normalized name.
-    
+
     Args:
         model_name: External model name from client
         hidden_models: Dict mapping display names to internal Kiro IDs
-    
+
     Returns:
         Model ID to send to Kiro API
-    
+
     Examples:
         >>> get_model_id_for_kiro("claude-haiku-4-5-20251001", {})
         'claude-haiku-4.5'
@@ -194,13 +205,13 @@ def get_model_id_for_kiro(model_name: str, hidden_models: Dict[str, str]) -> str
 def extract_model_family(model_name: str) -> Optional[str]:
     """
     Extract model family from model name.
-    
+
     Args:
         model_name: Model name (normalized or not)
-    
+
     Returns:
         Family name ('haiku', 'sonnet', 'opus') or None if not a Claude model
-    
+
     Examples:
         >>> extract_model_family("claude-haiku-4.5")
         'haiku'
@@ -211,7 +222,7 @@ def extract_model_family(model_name: str) -> Optional[str]:
         >>> extract_model_family("gpt-4")
         None
     """
-    family_match = re.search(r'(haiku|sonnet|opus)', model_name, re.IGNORECASE)
+    family_match = re.search(r"(haiku|sonnet|opus)", model_name, re.IGNORECASE)
     if family_match:
         return family_match.group(1).lower()
     return None
@@ -220,23 +231,23 @@ def extract_model_family(model_name: str) -> Optional[str]:
 class ModelResolver:
     """
     Dynamic model resolver with normalization and optimistic pass-through.
-    
+
     Key principle: We are a gateway, not a gatekeeper.
     Kiro API is the final arbiter of what models exist.
-    
+
     Resolution layers:
     0. Resolve aliases (custom name mappings)
     1. Normalize name (dashes→dots, strip dates)
     2. Check dynamic cache (from /ListAvailableModels)
     3. Check hidden models (manual config)
     4. Pass-through (let Kiro decide)
-    
+
     Attributes:
         cache: ModelInfoCache instance for dynamic model lookup
         hidden_models: Dict mapping display names to internal Kiro IDs
         aliases: Dict mapping alias names to real model IDs
         hidden_from_list: Set of model IDs to hide from /v1/models endpoint
-    
+
     Example:
         >>> resolver = ModelResolver(cache, hidden_models, aliases={"auto-kiro": "auto"})
         >>> resolution = resolver.resolve("auto-kiro")
@@ -245,17 +256,17 @@ class ModelResolver:
         >>> resolution.source
         'cache'
     """
-    
+
     def __init__(
         self,
         cache: ModelInfoCache,
         hidden_models: Optional[Dict[str, str]] = None,
         aliases: Optional[Dict[str, str]] = None,
-        hidden_from_list: Optional[List[str]] = None
+        hidden_from_list: Optional[List[str]] = None,
     ):
         """
         Initialize the model resolver.
-        
+
         Args:
             cache: ModelInfoCache instance for dynamic model lookup
             hidden_models: Dict mapping display names to internal Kiro IDs.
@@ -269,35 +280,33 @@ class ModelResolver:
         self.hidden_models = hidden_models or {}
         self.aliases = aliases or {}
         self.hidden_from_list = set(hidden_from_list or [])
-    
+
     def resolve(self, external_model: str) -> ModelResolution:
         """
         Resolve external model name to internal Kiro ID.
-        
+
         NEVER raises - always returns a resolution.
         If model is not in cache/hidden, we pass it through to Kiro.
         Kiro will be the final judge.
-        
+
         Args:
             external_model: Model name from client request
-        
+
         Returns:
             ModelResolution with internal ID and metadata
         """
         # Layer 0: Resolve alias (if exists)
         resolved_model = self.aliases.get(external_model, external_model)
         if resolved_model != external_model:
-            logger.debug(
-                f"Alias resolved: '{external_model}' → '{resolved_model}'"
-            )
-        
+            logger.debug(f"Alias resolved: '{external_model}' → '{resolved_model}'")
+
         # Layer 1: Normalize name (dashes→dots, strip date)
         normalized = normalize_model_name(resolved_model)
-        
+
         logger.debug(
             f"Model resolution: '{external_model}' → normalized: '{normalized}'"
         )
-        
+
         # Layer 2: Check dynamic cache (from /ListAvailableModels)
         if self.cache.is_valid_model(normalized):
             logger.debug(f"Model '{normalized}' found in dynamic cache")
@@ -306,9 +315,9 @@ class ModelResolver:
                 source="cache",
                 original_request=external_model,
                 normalized=normalized,
-                is_verified=True
+                is_verified=True,
             )
-        
+
         # Layer 3: Check hidden models
         if normalized in self.hidden_models:
             internal_id = self.hidden_models[normalized]
@@ -320,9 +329,9 @@ class ModelResolver:
                 source="hidden",
                 original_request=external_model,
                 normalized=normalized,
-                is_verified=True
+                is_verified=True,
             )
-        
+
         # Layer 4: Pass-through - let Kiro decide!
         # We don't know all models, Kiro might have hidden ones
         logger.info(
@@ -334,64 +343,64 @@ class ModelResolver:
             source="passthrough",
             original_request=external_model,
             normalized=normalized,
-            is_verified=False  # Not verified locally, Kiro will judge
+            is_verified=False,  # Not verified locally, Kiro will judge
         )
-    
+
     def get_available_models(self) -> List[str]:
         """
         Get list of all available model IDs for /v1/models endpoint.
-        
+
         Combines:
         - Models from dynamic cache (Kiro API)
         - Hidden models (manual config)
         - Alias names (custom mappings)
-        
+
         Excludes:
         - Models in hidden_from_list (e.g., "auto" when showing "auto-kiro")
-        
+
         Returns:
             List of model IDs in consistent format (with dots)
         """
         # Start with cache models
         models = set(self.cache.get_all_model_ids())
-        
+
         # Add hidden model display names (they use dot format)
         models.update(self.hidden_models.keys())
-        
+
         # Remove models that should be hidden from list
         models -= self.hidden_from_list
-        
+
         # Add alias keys (these are the names users will see and use)
         models.update(self.aliases.keys())
-        
+
         return sorted(models)
-    
+
     def get_models_by_family(self, family: str) -> List[str]:
         """
         Get available models filtered by family.
-        
+
         Used for error messages to suggest alternatives from the same family.
-        
+
         Args:
             family: Model family ('haiku', 'sonnet', 'opus')
-        
+
         Returns:
             List of model IDs from the specified family
         """
         all_models = self.get_available_models()
         return [m for m in all_models if family.lower() in m.lower()]
-    
+
     def get_suggestions_for_model(self, model_name: str) -> List[str]:
         """
         Get available models from the SAME family for error message.
-        
+
         IMPORTANT: Never suggests models from different family!
         Opus request → only Opus suggestions
         Sonnet request → only Sonnet suggestions
-        
+
         Args:
             model_name: The model that was requested but not found
-        
+
         Returns:
             List of available models from the same family, or all models
             if family cannot be determined
@@ -399,6 +408,6 @@ class ModelResolver:
         family = extract_model_family(model_name)
         if family:
             return self.get_models_by_family(family)
-        
+
         # If we can't determine family, return all models
         return self.get_available_models()

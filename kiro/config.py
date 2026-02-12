@@ -37,44 +37,45 @@ load_dotenv()
 def _get_raw_env_value(var_name: str, env_file: str = ".env") -> Optional[str]:
     """
     Read variable value from .env file without processing escape sequences.
-    
+
     This is necessary for correct handling of Windows paths where backslashes
     (e.g., D:\\Projects\\file.json) may be incorrectly interpreted
     as escape sequences (\\a -> bell, \\n -> newline, etc.).
-    
+
     Args:
         var_name: Environment variable name
         env_file: Path to .env file (default ".env")
-    
+
     Returns:
         Raw variable value or None if not found
     """
     env_path = Path(env_file)
     if not env_path.exists():
         return None
-    
+
     try:
         # Read file as-is, without interpretation
         content = env_path.read_text(encoding="utf-8")
-        
+
         # Search for variable considering different formats:
         # VAR="value" or VAR='value' or VAR=value
         # Pattern captures value with or without quotes
         pattern = rf'^{re.escape(var_name)}=(["\']?)(.+?)\1\s*$'
-        
+
         for line in content.splitlines():
             line = line.strip()
             if line.startswith("#") or not line:
                 continue
-            
+
             match = re.match(pattern, line)
             if match:
                 # Return value as-is, without processing escape sequences
                 return match.group(2)
     except Exception:
         pass
-    
+
     return None
+
 
 # ==================================================================================================
 # Server Settings
@@ -96,7 +97,15 @@ SERVER_PORT: int = int(os.getenv("SERVER_PORT", str(DEFAULT_SERVER_PORT)))
 # ==================================================================================================
 
 # API key for proxy access (clients must pass it in Authorization header)
-PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", "my-super-secret-password-123")
+DEFAULT_PROXY_API_KEY: str = "my-super-secret-password-123"
+PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", DEFAULT_PROXY_API_KEY)
+
+# Optional additional API keys accepted by the gateway (comma-separated).
+# Useful for client migration while keeping one primary key.
+_proxy_aliases_raw: str = os.getenv("PROXY_API_KEY_ALIASES", "")
+PROXY_API_KEY_ALIASES: List[str] = [
+    value.strip() for value in _proxy_aliases_raw.split(",") if value.strip()
+]
 
 # ==================================================================================================
 # VPN/Proxy Settings for Kiro API Access
@@ -120,6 +129,15 @@ PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", "my-super-secret-password-123")
 #   VPN_PROXY_URL=192.168.1.100:8080  (defaults to http://)
 VPN_PROXY_URL: str = os.getenv("VPN_PROXY_URL", "")
 
+# TLS certificate verification for upstream HTTPS connections.
+# Default is secure (verification enabled).
+# Set to true only when your proxy performs TLS interception with untrusted certs.
+ALLOW_UNTRUSTED_TLS: bool = os.getenv("ALLOW_UNTRUSTED_TLS", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # ==================================================================================================
 # Kiro API Credentials
 # ==================================================================================================
@@ -136,22 +154,32 @@ REGION: str = os.getenv("KIRO_REGION", "us-east-1")
 # Path to credentials file (optional, alternative to .env)
 # Read directly from .env to avoid escape sequence issues on Windows
 # (e.g., \a in path D:\Projects\adolf is interpreted as bell character)
-_raw_creds_file = _get_raw_env_value("KIRO_CREDS_FILE") or os.getenv("KIRO_CREDS_FILE", "")
-# Normalize path for cross-platform compatibility
-KIRO_CREDS_FILE: str = str(Path(_raw_creds_file)) if _raw_creds_file else ""
+_raw_creds_file = _get_raw_env_value("KIRO_CREDS_FILE") or os.getenv(
+    "KIRO_CREDS_FILE", ""
+)
+# Normalize path for cross-platform compatibility and expand user home
+KIRO_CREDS_FILE: str = (
+    str(Path(_raw_creds_file).expanduser()) if _raw_creds_file else ""
+)
 
 # Path to kiro-cli SQLite database (optional, for AWS SSO OIDC authentication)
 # Default location: ~/.local/share/kiro-cli/data.sqlite3 (Linux/macOS)
 # or ~/.local/share/amazon-q/data.sqlite3 (amazon-q-developer-cli)
-_raw_cli_db_file = _get_raw_env_value("KIRO_CLI_DB_FILE") or os.getenv("KIRO_CLI_DB_FILE", "")
-KIRO_CLI_DB_FILE: str = str(Path(_raw_cli_db_file)) if _raw_cli_db_file else ""
+_raw_cli_db_file = _get_raw_env_value("KIRO_CLI_DB_FILE") or os.getenv(
+    "KIRO_CLI_DB_FILE", ""
+)
+KIRO_CLI_DB_FILE: str = (
+    str(Path(_raw_cli_db_file).expanduser()) if _raw_cli_db_file else ""
+)
 
 # ==================================================================================================
 # Kiro API URL Templates
 # ==================================================================================================
 
 # URL for token refresh (Kiro Desktop Auth)
-KIRO_REFRESH_URL_TEMPLATE: str = "https://prod.{region}.auth.desktop.kiro.dev/refreshToken"
+KIRO_REFRESH_URL_TEMPLATE: str = (
+    "https://prod.{region}.auth.desktop.kiro.dev/refreshToken"
+)
 
 # URL for token refresh (AWS SSO OIDC - used by kiro-cli)
 AWS_SSO_OIDC_URL_TEMPLATE: str = "https://oidc.{region}.amazonaws.com/token"
@@ -201,7 +229,6 @@ HIDDEN_MODELS: Dict[str, str] = {
     # Claude 3.7 Sonnet - legacy flagship model, still works!
     # Hidden in Kiro API but functional. Great for users who prefer it.
     "claude-3.7-sonnet": "CLAUDE_3_7_SONNET_20250219_V1_0",
-    
     # Add other hidden/experimental models here as discovered.
     # Example: "claude-secret-model": "INTERNAL_SECRET_MODEL_ID",
 }
@@ -295,7 +322,202 @@ DEFAULT_MAX_INPUT_TOKENS: int = 200000
 # Maximum length of tool description in characters.
 # Descriptions longer than this limit will be moved to system prompt.
 # Set to 0 to disable (not recommended - will cause Kiro API errors).
-TOOL_DESCRIPTION_MAX_LENGTH: int = int(os.getenv("TOOL_DESCRIPTION_MAX_LENGTH", "10000"))
+TOOL_DESCRIPTION_MAX_LENGTH: int = int(
+    os.getenv("TOOL_DESCRIPTION_MAX_LENGTH", "10000")
+)
+
+# ==================================================================================================
+# Tool Result Size Guard (Oversized Tool Output Protection)
+# ==================================================================================================
+
+# Kiro API can return vague 400 "Improperly formed request" errors for oversized payloads.
+# In practice this is often caused by very large tool_result blocks (logs, crash dumps, schemas).
+#
+# This guard rejects oversized tool outputs with a clear error message, following the
+# industry standard approach (OpenAI uses 512KB hard limit with reject).
+#
+# When a tool output exceeds the limit, the AI receives a clear error message instructing
+# it to use alternative methods (head/tail/grep) to reduce output size. This is the
+# correct approach because:
+# - Gateway should not modify content (that's the AI/client's responsibility)
+# - AI can make informed decisions about what data to keep
+# - Truncation by gateway would cause unpredictable AI behavior
+#
+# Enabled by default to proactively prevent vague upstream
+# "Improperly formed request" errors from oversized tool payloads.
+# Disable if you want stricter transparent-proxy behavior.
+_TOOL_RESULT_GUARD_RAW: str = os.getenv("TOOL_RESULT_GUARD_ENABLED", "true").lower()
+TOOL_RESULT_GUARD_ENABLED: bool = _TOOL_RESULT_GUARD_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Max characters for a single tool_result block.
+# Conservative default to proactively prevent upstream 400 validation failures.
+TOOL_RESULT_MAX_CHARS: int = int(os.getenv("TOOL_RESULT_MAX_CHARS", "50000"))
+
+# Max total characters for all tool_result blocks in one request.
+# Conservative default to reduce risk of vague upstream "Improperly formed request" errors.
+TOOL_RESULT_TOTAL_MAX_CHARS: int = int(
+    os.getenv("TOOL_RESULT_TOTAL_MAX_CHARS", "200000")
+)
+
+# Guard oversized tool call arguments (function.arguments / tool_use.input).
+# This prevents vague upstream 400 errors when clients send very large arguments.
+_TOOL_CALL_ARGS_GUARD_RAW: str = os.getenv(
+    "TOOL_CALL_ARGS_GUARD_ENABLED", "true"
+).lower()
+TOOL_CALL_ARGS_GUARD_ENABLED: bool = _TOOL_CALL_ARGS_GUARD_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Max characters allowed in a single tool call arguments payload.
+TOOL_CALL_ARGS_MAX_CHARS: int = int(os.getenv("TOOL_CALL_ARGS_MAX_CHARS", "50000"))
+
+# ==================================================================================================
+# Queued Announce Guard (OpenClaw busy-queue payload protection)
+# ==================================================================================================
+
+# OpenClaw can enqueue large "Queued announce messages while agent was busy" payloads.
+# These are infrastructure/system notices (not direct user-authored prompts) and may contain
+# full subagent reports. Very large queued notices can trigger vague upstream
+# 400 "Improperly formed request" errors.
+#
+# This guard compacts ONLY those queued-announce notice blocks when they exceed threshold.
+# It preserves a head/tail preview and inserts a transparent gateway notice.
+# Regular user messages are never touched by this guard.
+#
+# Sizing rationale (aligned with Kiro API limits):
+#   - Kiro API context window: ~200K tokens (~800K chars)
+#   - Tool result guard: 50K per tool, 200K total — proven safe
+#   - Previous default (1800 chars / ~450 tokens) was too aggressive:
+#     a typical sub-agent report is 3K-15K chars, so the old limit
+#     destroyed most of the useful content.
+#   - New default (12000 chars / ~3000 tokens) preserves a medium-sized
+#     sub-agent report intact. Even 5 queued announces at 12K each = 60K chars,
+#     which is ~7.5% of the context window — well within safe bounds.
+_QUEUED_ANNOUNCE_GUARD_RAW: str = os.getenv(
+    "QUEUED_ANNOUNCE_GUARD_ENABLED", "true"
+).lower()
+QUEUED_ANNOUNCE_GUARD_ENABLED: bool = _QUEUED_ANNOUNCE_GUARD_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Maximum total chars for a single queued announce text block before compaction.
+QUEUED_ANNOUNCE_MAX_CHARS: int = int(os.getenv("QUEUED_ANNOUNCE_MAX_CHARS", "12000"))
+
+# Number of chars to keep from the start/end when compaction is applied.
+QUEUED_ANNOUNCE_HEAD_CHARS: int = int(os.getenv("QUEUED_ANNOUNCE_HEAD_CHARS", "6000"))
+QUEUED_ANNOUNCE_TAIL_CHARS: int = int(os.getenv("QUEUED_ANNOUNCE_TAIL_CHARS", "4000"))
+
+# ==================================================================================================
+# Middleware Pipeline Settings
+# ==================================================================================================
+
+# Tool Pairing Validator: fixes orphaned tool_use/tool_result blocks.
+# Enabled by default to repair malformed tool-use/tool-result flows that would
+# otherwise fail with vague upstream 400 validation errors.
+# Disable if you want stricter transparent-proxy behavior.
+# Default: true
+_TOOL_PAIRING_VALIDATOR_RAW: str = os.getenv(
+    "TOOL_PAIRING_VALIDATOR_ENABLED", "true"
+).lower()
+TOOL_PAIRING_VALIDATOR_ENABLED: bool = _TOOL_PAIRING_VALIDATOR_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Message Structure Validator: fixes role alternation, empty content, first-message role.
+# Enabled by default to normalize malformed role/content structures that can
+# trigger vague upstream 400 errors.
+# Disable if you want stricter transparent-proxy behavior.
+# Default: true
+_MESSAGE_STRUCTURE_VALIDATOR_RAW: str = os.getenv(
+    "MESSAGE_STRUCTURE_VALIDATOR_ENABLED", "true"
+).lower()
+MESSAGE_STRUCTURE_VALIDATOR_ENABLED: bool = _MESSAGE_STRUCTURE_VALIDATOR_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Reactive Retry: when upstream returns 400 "Improperly formed request",
+# automatically sanitize the message array and retry once.
+# Default: true
+_REACTIVE_RETRY_RAW: str = os.getenv("REACTIVE_RETRY_ENABLED", "true").lower()
+REACTIVE_RETRY_ENABLED: bool = _REACTIVE_RETRY_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Maximum number of automatic retries on 400 errors before giving up.
+REACTIVE_RETRY_MAX_ATTEMPTS: int = int(os.getenv("REACTIVE_RETRY_MAX_ATTEMPTS", "1"))
+
+# Kiro request payload limit guard (bytes, not characters).
+# Reverse-engineered upstream behavior (Issue #73 comments): failures can start
+# around ~615KB payload size. Use safer headroom by default.
+#
+# New key: KIRO_MAX_PAYLOAD_BYTES
+# Backward compatibility: if KIRO_MAX_PAYLOAD_BYTES is not set, we read legacy
+# KIRO_MAX_PAYLOAD_CHARS and interpret it as bytes.
+_KIRO_MAX_PAYLOAD_DEFAULT: str = "590000"
+_KIRO_MAX_PAYLOAD_BYTES_RAW: str = os.getenv(
+    "KIRO_MAX_PAYLOAD_BYTES",
+    os.getenv("KIRO_MAX_PAYLOAD_CHARS", _KIRO_MAX_PAYLOAD_DEFAULT),
+)
+KIRO_MAX_PAYLOAD_BYTES: int = int(_KIRO_MAX_PAYLOAD_BYTES_RAW)
+
+# Backward-compatible alias (deprecated): kept for integrations that import this name.
+KIRO_MAX_PAYLOAD_CHARS: int = KIRO_MAX_PAYLOAD_BYTES
+
+# Optional hard cap for Kiro history entries after conversion.
+# Default 0 = disabled (preserve context unless payload-size guard needs trimming).
+KIRO_MAX_HISTORY_ENTRIES: int = int(os.getenv("KIRO_MAX_HISTORY_ENTRIES", "0"))
+
+# ==================================================================================================
+# Authentication Mode
+# ==================================================================================================
+
+# When true, skip upstream bearer token auth and forward requests without Authorization header.
+# Intended for setups where upstream proxy handles auth/model access independently.
+_SKIP_AUTH_RAW: str = os.getenv("SKIP_AUTH", "false").lower()
+SKIP_AUTH: bool = _SKIP_AUTH_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Explicit acknowledgement for SKIP_AUTH. This prevents accidental production
+# enablement where upstream Authorization is silently dropped.
+_SKIP_AUTH_ACKNOWLEDGED_RAW: str = os.getenv("SKIP_AUTH_ACKNOWLEDGED", "false").lower()
+SKIP_AUTH_ACKNOWLEDGED: bool = _SKIP_AUTH_ACKNOWLEDGED_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
 
 # ==================================================================================================
 # Truncation Recovery Settings
@@ -307,7 +529,11 @@ TOOL_DESCRIPTION_MAX_LENGTH: int = int(os.getenv("TOOL_DESCRIPTION_MAX_LENGTH", 
 # - For content: synthetic user message notifying about truncation
 # This helps the model understand and adapt to Kiro API limitations
 # Default: true (enabled)
-TRUNCATION_RECOVERY: bool = os.getenv("TRUNCATION_RECOVERY", "true").lower() in ("true", "1", "yes")
+TRUNCATION_RECOVERY: bool = os.getenv("TRUNCATION_RECOVERY", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 # ==================================================================================================
 # Logging Settings
@@ -365,16 +591,17 @@ def _warn_timeout_configuration():
     """
     Print warning if timeout configuration is suboptimal.
     Called at application startup.
-    
+
     FIRST_TOKEN_TIMEOUT should be less than STREAMING_READ_TIMEOUT:
     - FIRST_TOKEN_TIMEOUT: time to wait for model to START responding
     - STREAMING_READ_TIMEOUT: time to wait BETWEEN chunks during streaming
     """
     if FIRST_TOKEN_TIMEOUT >= STREAMING_READ_TIMEOUT:
         import sys
+
         YELLOW = "\033[93m"
         RESET = "\033[0m"
-        
+
         warning_text = f"""
 {YELLOW}⚠️  WARNING: Suboptimal timeout configuration detected.
     
@@ -392,6 +619,7 @@ def _warn_timeout_configuration():
 """
         print(warning_text, file=sys.stderr)
 
+
 # ==================================================================================================
 # Fake Reasoning Settings (Extended Thinking via Tag Injection)
 # ==================================================================================================
@@ -405,16 +633,54 @@ def _warn_timeout_configuration():
 # with <thinking>...</thinking> blocks that we parse and convert to reasoning_content.
 # It works great, but it's a hack - hence "fake" reasoning.
 #
-# Default: true (enabled) - provides premium experience out of the box
+# Default: false (disabled unless explicitly enabled)
 _FAKE_REASONING_RAW: str = os.getenv("FAKE_REASONING", "").lower()
-# Default is True - if env var is not set or empty, enable fake reasoning
-FAKE_REASONING_ENABLED: bool = _FAKE_REASONING_RAW not in ("false", "0", "no", "disabled", "off")
+# Default is False - if env var is not set or empty, keep native behavior
+FAKE_REASONING_ENABLED: bool = _FAKE_REASONING_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
 
 # Maximum thinking length in tokens.
 # This value is injected into the request as <max_thinking_length>{value}</max_thinking_length>
 # Higher values allow for more detailed reasoning but increase response time and token usage.
 # Default: 4000 tokens
 FAKE_REASONING_MAX_TOKENS: int = int(os.getenv("FAKE_REASONING_MAX_TOKENS", "4000"))
+
+# Request-driven thinking policy token budgets.
+# These values are used when clients explicitly send thinking/reasoning effort hints.
+# If no hints are provided, gateway falls back to FAKE_REASONING_* defaults.
+THINKING_OPENAI_MINIMAL_TOKENS: int = int(
+    os.getenv("THINKING_OPENAI_MINIMAL_TOKENS", "600")
+)
+THINKING_OPENAI_LOW_TOKENS: int = int(os.getenv("THINKING_OPENAI_LOW_TOKENS", "600"))
+THINKING_OPENAI_MEDIUM_TOKENS: int = int(
+    os.getenv("THINKING_OPENAI_MEDIUM_TOKENS", "1800")
+)
+THINKING_OPENAI_HIGH_TOKENS: int = int(os.getenv("THINKING_OPENAI_HIGH_TOKENS", "3000"))
+THINKING_OPENAI_XHIGH_TOKENS: int = int(
+    os.getenv("THINKING_OPENAI_XHIGH_TOKENS", "4000")
+)
+
+THINKING_ANTHROPIC_LOW_TOKENS: int = int(
+    os.getenv("THINKING_ANTHROPIC_LOW_TOKENS", "600")
+)
+THINKING_ANTHROPIC_MEDIUM_TOKENS: int = int(
+    os.getenv("THINKING_ANTHROPIC_MEDIUM_TOKENS", "1800")
+)
+THINKING_ANTHROPIC_HIGH_TOKENS: int = int(
+    os.getenv("THINKING_ANTHROPIC_HIGH_TOKENS", "3000")
+)
+THINKING_ANTHROPIC_MAX_TOKENS: int = int(
+    os.getenv("THINKING_ANTHROPIC_MAX_TOKENS", "4000")
+)
+
+# Global clamp used for incoming numeric budgets from request body/headers.
+THINKING_MIN_TOKENS: int = int(os.getenv("THINKING_MIN_TOKENS", "256"))
+THINKING_MAX_TOKENS: int = int(os.getenv("THINKING_MAX_TOKENS", "120000"))
 
 # How to handle the thinking block in responses:
 # - "as_reasoning_content": Extract to reasoning_content field (OpenAI-compatible, recommended)
@@ -423,8 +689,15 @@ FAKE_REASONING_MAX_TOKENS: int = int(os.getenv("FAKE_REASONING_MAX_TOKENS", "400
 # - "strip_tags": Remove tags but keep thinking content in regular content
 #
 # Default: "as_reasoning_content"
-_FAKE_REASONING_HANDLING_RAW: str = os.getenv("FAKE_REASONING_HANDLING", "as_reasoning_content").lower()
-if _FAKE_REASONING_HANDLING_RAW in ("as_reasoning_content", "remove", "pass", "strip_tags"):
+_FAKE_REASONING_HANDLING_RAW: str = os.getenv(
+    "FAKE_REASONING_HANDLING", "as_reasoning_content"
+).lower()
+if _FAKE_REASONING_HANDLING_RAW in (
+    "as_reasoning_content",
+    "remove",
+    "pass",
+    "strip_tags",
+):
     FAKE_REASONING_HANDLING: str = _FAKE_REASONING_HANDLING_RAW
 else:
     FAKE_REASONING_HANDLING: str = "as_reasoning_content"
@@ -432,13 +705,20 @@ else:
 # List of opening tags to detect thinking blocks.
 # The parser will look for any of these tags at the start of the response.
 # Order matters - first match wins.
-FAKE_REASONING_OPEN_TAGS: List[str] = ["<thinking>", "<think>", "<reasoning>", "<thought>"]
+FAKE_REASONING_OPEN_TAGS: List[str] = [
+    "<thinking>",
+    "<think>",
+    "<reasoning>",
+    "<thought>",
+]
 
 # Maximum size of initial buffer for tag detection (characters).
 # If no thinking tag is found within this limit, content is treated as regular response.
 # Lower values = faster first token, but may miss tags with leading whitespace.
 # Default: 30 characters (enough for longest tag + some whitespace)
-FAKE_REASONING_INITIAL_BUFFER_SIZE: int = int(os.getenv("FAKE_REASONING_INITIAL_BUFFER_SIZE", "20"))
+FAKE_REASONING_INITIAL_BUFFER_SIZE: int = int(
+    os.getenv("FAKE_REASONING_INITIAL_BUFFER_SIZE", "20")
+)
 
 
 # ==================================================================================================
@@ -468,4 +748,3 @@ def get_kiro_api_host(region: str) -> str:
 def get_kiro_q_host(region: str) -> str:
     """Return Q API host for the specified region."""
     return KIRO_Q_HOST_TEMPLATE.format(region=region)
-
