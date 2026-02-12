@@ -35,6 +35,12 @@ Feito com ❤️ por [@Jwadow](https://github.com/jwadow)
 
 📦 **Claude 3.7 Sonnet** — Modelo legado. Disponível para compatibilidade retroativa.
 
+🐋 **DeepSeek-V3.2** — Modelo MoE aberto (685B parâmetros, 37B ativos). Desempenho equilibrado para programação, raciocínio e tarefas gerais.
+
+🧩 **MiniMax M2.1** — Modelo MoE aberto (230B parâmetros, 10B ativos). Ótimo para tarefas complexas, planejamento e fluxos de trabalho multietapas.
+
+🤖 **Qwen3-Coder-Next** — Modelo MoE aberto (80B parâmetros, 3B ativos). Focado em programação. Excelente para desenvolvimento e projetos grandes.
+
 > 💡 **Resolução Inteligente de Modelos:** Use qualquer formato de nome de modelo — `claude-sonnet-4-5`, `claude-sonnet-4.5`, ou até nomes versionados como `claude-sonnet-4-5-20250929`. O gateway normaliza automaticamente.
 
 ---

@@ -35,6 +35,12 @@ Dibuat dengan ❤️ oleh [@Jwadow](https://github.com/jwadow)
 
 📦 **Claude 3.7 Sonnet** — Model lama. Tersedia untuk kompatibilitas mundur.
 
+🐋 **DeepSeek-V3.2** — Model MoE terbuka (685B parameter, 37B aktif). Performa seimbang untuk coding, penalaran, dan tugas umum.
+
+🧩 **MiniMax M2.1** — Model MoE terbuka (230B parameter, 10B aktif). Bagus untuk tugas kompleks, perencanaan, dan alur kerja multi-langkah.
+
+🤖 **Qwen3-Coder-Next** — Model MoE terbuka (80B parameter, 3B aktif). Fokus pada coding. Sempurna untuk pengembangan dan proyek besar.
+
 > 💡 **Resolusi Model Cerdas:** Gunakan format nama model apa pun — `claude-sonnet-4-5`, `claude-sonnet-4.5`, atau bahkan nama berversi seperti `claude-sonnet-4-5-20250929`. Gateway akan menormalisasi secara otomatis.
 
 ---
