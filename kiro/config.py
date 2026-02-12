@@ -133,6 +133,12 @@ PROFILE_ARN: str = os.getenv("PROFILE_ARN", "")
 # AWS region (default us-east-1)
 REGION: str = os.getenv("KIRO_REGION", "us-east-1")
 
+# API region for kiro-cli (AWS SSO OIDC) authentication
+# kiro-cli may use a different API region than the SSO region
+# Leave empty to use the same region as KIRO_REGION (default behavior)
+# Only set this if you experience 403 errors with kiro-cli credentials
+KIRO_CLI_API_REGION: str = os.getenv("KIRO_CLI_API_REGION", "")
+
 # Path to credentials file (optional, alternative to .env)
 # Read directly from .env to avoid escape sequence issues on Windows
 # (e.g., \a in path D:\Projects\adolf is interpreted as bell character)
