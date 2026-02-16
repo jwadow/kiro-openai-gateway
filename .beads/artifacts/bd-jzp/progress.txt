@@ -1,0 +1,35 @@
+# Progress Log
+
+Bead: bd-jzp
+Started: 2026-02-17
+
+## Codebase Patterns
+
+- Route-level API key validation is centralized in `kiro/routes_openai.py` and `kiro/routes_anthropic.py`.
+- Model IDs are normalized in converter layer before Kiro payload assembly.
+- Usage metrics for streaming/non-streaming are propagated through parser and streaming core.
+
+---
+
+## Start Session
+
+- Claimed bead `bd-jzp` as `in_progress`.
+- Created branch `feat/bd-jzp-integrate-mongodb-api-key-auth-and-per-model-credits-billing`.
+- Converted PRD markdown to executable `.beads/artifacts/bd-jzp/prd.json`.
+
+## Ship Session
+
+- Implemented MongoDB auth source switching in `kiro/routes_openai.py` and `kiro/routes_anthropic.py` with active-user lookup via `usersNew.apiKey`.
+- Added MongoDB store module `kiro/mongodb_store.py` for user lookup, balance check, and atomic deduction from `creditsNew`.
+- Added billing module `kiro/billing.py` for model pricing resolution, unknown-model policy, preflight cost estimate, and post-usage deduction.
+- Added/updated tests:
+  - `tests/unit/test_billing.py`
+  - `tests/unit/test_routes_openai.py`
+  - `tests/unit/test_routes_anthropic.py`
+- Verification evidence:
+  - `pytest tests/unit/test_billing.py tests/unit/test_routes_openai.py tests/unit/test_routes_anthropic.py -v` (121 passed)
+  - `pytest tests/unit/test_streaming_openai.py -v` (37 passed)
+  - `pytest tests/integration/test_full_flow.py -v` (12 passed)
+  - `pytest -v` (1422 passed, 3 warnings)
+  - `ruff check .` not available in environment (`command not found`)
+  - `mypy .` not available in environment (`command not found`)

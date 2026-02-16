@@ -1,0 +1,142 @@
+{
+	"beadId": "bd-jzp",
+	"prdName": "integrate-mongodb-api-key-auth-and-per-model-credits-billing",
+	"tasks": [
+		{
+			"id": "backend-1",
+			"category": "backend",
+			"title": "Implement auth source switch and MongoDB API key validation",
+			"description": "Gateway auth dependencies accept both legacy env mode and MongoDB mode, with active-user validation by usersNew.apiKey.",
+			"steps": [
+				"pytest tests/unit/test_routes_openai.py -v",
+				"pytest tests/unit/test_routes_anthropic.py -v"
+			],
+			"passes": true,
+			"metadata": {
+				"depends_on": [],
+				"parallel": false,
+				"conflicts_with": [],
+				"files": [
+					"kiro/config.py",
+					"kiro/routes_openai.py",
+					"kiro/routes_anthropic.py",
+					"kiro/mongodb_store.py"
+				]
+			}
+		},
+		{
+			"id": "backend-2",
+			"category": "backend",
+			"title": "Implement model pricing parser and charge calculator",
+			"description": "Billing module can compute deterministic charges from usage and model pricing JSON, including unknown-model policies.",
+			"steps": ["pytest tests/unit/test_billing.py -v"],
+			"passes": true,
+			"metadata": {
+				"depends_on": [],
+				"parallel": true,
+				"conflicts_with": [],
+				"files": [
+					"kiro/config.py",
+					"kiro/billing.py",
+					"tests/unit/test_billing.py"
+				]
+			}
+		},
+		{
+			"id": "backend-3",
+			"category": "backend",
+			"title": "Add preflight sufficient-credit enforcement",
+			"description": "Routes perform credit sufficiency checks before upstream execution when billing is enabled and enforcement is true.",
+			"steps": [
+				"pytest tests/unit/test_routes_openai.py -v",
+				"pytest tests/unit/test_routes_anthropic.py -v"
+			],
+			"passes": true,
+			"metadata": {
+				"depends_on": [
+					"Implement auth source switch and MongoDB API key validation",
+					"Implement model pricing parser and charge calculator"
+				],
+				"parallel": false,
+				"conflicts_with": [],
+				"files": [
+					"kiro/routes_openai.py",
+					"kiro/routes_anthropic.py",
+					"kiro/billing.py"
+				]
+			}
+		},
+		{
+			"id": "backend-4",
+			"category": "backend",
+			"title": "Add post-usage atomic credit deduction",
+			"description": "Credits are atomically decremented in creditsNew from finalized usage for non-streaming and streaming completion paths.",
+			"steps": [
+				"pytest tests/unit/test_streaming_openai.py -v",
+				"pytest tests/integration/test_full_flow.py -v"
+			],
+			"passes": true,
+			"metadata": {
+				"depends_on": ["Add preflight sufficient-credit enforcement"],
+				"parallel": false,
+				"conflicts_with": [],
+				"files": [
+					"kiro/billing.py",
+					"kiro/routes_openai.py",
+					"kiro/routes_anthropic.py",
+					"kiro/streaming_openai.py"
+				]
+			}
+		},
+		{
+			"id": "test-1",
+			"category": "test",
+			"title": "Extend test coverage for concurrency and edge cases",
+			"description": "Tests cover retry/idempotency, unknown model policies, balance underflow prevention, and legacy env-mode compatibility.",
+			"steps": [
+				"pytest tests/unit/ -v",
+				"pytest tests/integration/test_full_flow.py -v"
+			],
+			"passes": true,
+			"metadata": {
+				"depends_on": ["Add post-usage atomic credit deduction"],
+				"parallel": false,
+				"conflicts_with": [],
+				"files": [
+					"tests/unit/test_routes_openai.py",
+					"tests/unit/test_routes_anthropic.py",
+					"tests/unit/test_billing.py",
+					"tests/integration/test_full_flow.py"
+				]
+			}
+		}
+	],
+	"context": {
+		"patterns": [
+			"Route-level auth in kiro/routes_openai.py and kiro/routes_anthropic.py",
+			"Model normalization via get_model_id_for_kiro in converters",
+			"Usage propagation via kiro/parsers.py and kiro/streaming_core.py"
+		],
+		"keyFiles": [
+			"kiro/config.py",
+			"kiro/routes_openai.py",
+			"kiro/routes_anthropic.py",
+			"kiro/parsers.py",
+			"kiro/streaming_core.py",
+			"kiro/streaming_openai.py",
+			"kiro/streaming_anthropic.py"
+		],
+		"nonGoals": [
+			"Replacing upstream Kiro credential flow",
+			"Building admin dashboard or invoicing",
+			"Changing OpenAI/Anthropic API compatibility"
+		]
+	},
+	"beadMetadata": {
+		"depends_on": [],
+		"parallel": true,
+		"conflicts_with": [],
+		"blocks": [],
+		"estimated_hours": 12
+	}
+}
