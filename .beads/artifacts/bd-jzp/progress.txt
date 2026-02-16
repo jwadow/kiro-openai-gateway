@@ -32,4 +32,14 @@ Started: 2026-02-17
   - `pytest tests/integration/test_full_flow.py -v` (12 passed)
   - `pytest -v` (1422 passed, 3 warnings)
   - `ruff check .` not available in environment (`command not found`)
-  - `mypy .` not available in environment (`command not found`)
+- `mypy .` not available in environment (`command not found`)
+
+## Review Pass 2
+
+- Addressed review findings:
+  - moved OpenAI preflight check before upstream call
+  - converted streaming deduction failures into SSE billing error termination paths
+  - aligned Anthropic streaming deduction input tokens with preflight by including tool tokens
+- Re-verified after fixes:
+  - `pytest tests/unit/test_routes_anthropic.py tests/unit/test_routes_openai.py tests/unit/test_billing.py tests/integration/test_full_flow.py -v` (133 passed)
+  - `pytest -v` (1422 passed, 3 warnings)
