@@ -1,0 +1,125 @@
+{
+	"beadId": "bd-2sl",
+	"prdName": "db-backed-multi-account-round-robin-auth",
+	"tasks": [
+		{
+			"id": "design-1",
+			"category": "design",
+			"title": "Define DB account pool model",
+			"description": "A validated account record model and DB read path exist that can load multiple auth accounts with health metadata.",
+			"steps": [
+				"pytest tests/unit/test_auth_manager.py -k \"sqlite and load\" -v"
+			],
+			"passes": true,
+			"metadata": {
+				"depends_on": [],
+				"parallel": false,
+				"conflicts_with": [],
+				"files": ["kiro/auth.py", "kiro/config.py"]
+			}
+		},
+		{
+			"id": "feature-1",
+			"category": "feature",
+			"title": "Implement round-robin selector with eligibility filtering",
+			"description": "Auth manager can atomically select next eligible account using deterministic round-robin while skipping quarantined accounts.",
+			"steps": [
+				"pytest tests/unit/test_auth_manager.py -k \"round_robin or quarantine\" -v"
+			],
+			"passes": true,
+			"metadata": {
+				"depends_on": ["Define DB account pool model"],
+				"parallel": false,
+				"conflicts_with": [],
+				"files": ["kiro/auth.py"]
+			}
+		},
+		{
+			"id": "feature-2",
+			"category": "feature",
+			"title": "Apply account-scoped refresh and persistence",
+			"description": "Token refresh and save operations target the selected account record only, preserving isolation between accounts.",
+			"steps": [
+				"pytest tests/unit/test_auth_manager.py -k \"refresh and retry and sqlite\" -v"
+			],
+			"passes": true,
+			"metadata": {
+				"depends_on": [
+					"Implement round-robin selector with eligibility filtering"
+				],
+				"parallel": false,
+				"conflicts_with": [],
+				"files": ["kiro/auth.py", "kiro/http_client.py"]
+			}
+		},
+		{
+			"id": "integration-1",
+			"category": "integration",
+			"title": "Wire pool mode into app startup and route compatibility paths",
+			"description": "Application startup initializes pool-capable auth manager without breaking existing OpenAI/Anthropic request paths.",
+			"steps": [
+				"pytest tests/unit/test_routes_openai.py tests/unit/test_routes_anthropic.py -v"
+			],
+			"passes": true,
+			"metadata": {
+				"depends_on": ["Apply account-scoped refresh and persistence"],
+				"parallel": false,
+				"conflicts_with": [],
+				"files": [
+					"main.py",
+					"kiro/routes_openai.py",
+					"kiro/routes_anthropic.py"
+				]
+			}
+		},
+		{
+			"id": "test-1",
+			"category": "test",
+			"title": "Add regression and concurrency test coverage for pool mode",
+			"description": "Comprehensive tests prove multi-account loading, deterministic rotation, failure skip logic, and backward compatibility.",
+			"steps": [
+				"pytest tests/unit/test_auth_manager.py tests/unit/test_config.py -v",
+				"pytest -v"
+			],
+			"passes": false,
+			"metadata": {
+				"depends_on": [
+					"Wire pool mode into app startup and route compatibility paths"
+				],
+				"parallel": false,
+				"conflicts_with": [],
+				"files": [
+					"tests/unit/test_auth_manager.py",
+					"tests/unit/test_config.py"
+				]
+			}
+		}
+	],
+	"context": {
+		"patterns": [
+			"kiro/auth.py centralizes credential loading, refresh, and token serving",
+			"main.py creates one shared KiroAuthManager in app.state",
+			"OpenAI and Anthropic routes consume auth_manager from app.state"
+		],
+		"keyFiles": [
+			"kiro/auth.py",
+			"main.py",
+			"kiro/config.py",
+			"kiro/http_client.py",
+			"tests/unit/test_auth_manager.py",
+			"tests/unit/test_config.py"
+		],
+		"nonGoals": [
+			"Replacing Kiro Desktop or AWS SSO OIDC authentication protocols",
+			"Adding new API endpoints for account management UI",
+			"Changing message conversion or streaming protocols"
+		]
+	},
+	"beadMetadata": {
+		"depends_on": [],
+		"parallel": true,
+		"conflicts_with": [],
+		"blocks": [],
+		"estimated_hours": 6
+	}
+}

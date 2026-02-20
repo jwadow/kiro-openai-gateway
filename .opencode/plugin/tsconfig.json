@@ -1,0 +1,16 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "NodeNext",
+		"moduleResolution": "nodenext",
+		"allowSyntheticDefaultImports": true,
+		"esModuleInterop": true,
+		"strict": true,
+		"noImplicitAny": false,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"types": ["node", "bun"]
+	},
+	"include": ["**/*.ts"],
+	"exclude": ["node_modules"]
+}

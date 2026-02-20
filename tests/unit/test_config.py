@@ -514,6 +514,42 @@ class TestKiroCliDbFileConfig:
             assert str(path) == config_module.KIRO_CLI_DB_FILE
 
 
+class TestKiroAuthSourceConfig:
+    """Tests for KIRO_AUTH_SOURCE and Mongo auth_kv config."""
+
+    def test_kiro_auth_source_defaults_to_auto(self):
+        """Verify default KIRO_AUTH_SOURCE value."""
+        with patch.dict(os.environ, {}, clear=False):
+            import importlib
+            import kiro.config as config_module
+            importlib.reload(config_module)
+            assert config_module.KIRO_AUTH_SOURCE == "auto"
+
+    def test_kiro_auth_source_accepts_mongodb(self):
+        """Verify KIRO_AUTH_SOURCE supports mongodb mode."""
+        with patch.dict(os.environ, {"KIRO_AUTH_SOURCE": "mongodb"}):
+            import importlib
+            import kiro.config as config_module
+            importlib.reload(config_module)
+            assert config_module.KIRO_AUTH_SOURCE == "mongodb"
+
+    def test_kiro_auth_source_invalid_falls_back_to_auto(self):
+        """Verify invalid KIRO_AUTH_SOURCE falls back to auto."""
+        with patch.dict(os.environ, {"KIRO_AUTH_SOURCE": "invalid"}):
+            import importlib
+            import kiro.config as config_module
+            importlib.reload(config_module)
+            assert config_module.KIRO_AUTH_SOURCE == "auto"
+
+    def test_mongodb_auth_kv_collection_default(self):
+        """Verify default MongoDB auth collection name."""
+        with patch.dict(os.environ, {}, clear=False):
+            import importlib
+            import kiro.config as config_module
+            importlib.reload(config_module)
+            assert config_module.MONGODB_AUTH_KV_COLLECTION == "auth_kv"
+
+
 class TestFallbackModelsConfig:
     """Tests for FALLBACK_MODELS configuration."""
     

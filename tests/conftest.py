@@ -903,6 +903,60 @@ def temp_sqlite_db_all_keys(tmp_path):
     return str(db_file)
 
 
+@pytest.fixture
+def temp_sqlite_db_round_robin(tmp_path):
+    """
+    Creates a SQLite database with multiple social accounts for round-robin tests.
+
+    Stores one base key and one suffixed key to emulate multi-account entries in auth_kv.
+    """
+    import sqlite3
+
+    db_file = tmp_path / "data_round_robin.sqlite3"
+    conn = sqlite3.connect(str(db_file))
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        CREATE TABLE auth_kv (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """
+    )
+
+    account_a = {
+        "access_token": "social_access_a",
+        "refresh_token": "social_refresh_a",
+        "expires_at": "2099-01-01T00:00:00Z",
+        "provider": "google",
+        "profile_arn": "arn:aws:codewhisperer:us-east-1:123456789:profile/account-a",
+        "region": "us-east-1",
+    }
+    account_b = {
+        "access_token": "social_access_b",
+        "refresh_token": "social_refresh_b",
+        "expires_at": "2099-01-01T00:00:00Z",
+        "provider": "github",
+        "profile_arn": "arn:aws:codewhisperer:us-east-1:123456789:profile/account-b",
+        "region": "us-east-1",
+    }
+
+    cursor.execute(
+        "INSERT INTO auth_kv (key, value) VALUES (?, ?)",
+        ("kirocli:social:token", json.dumps(account_a)),
+    )
+    cursor.execute(
+        "INSERT INTO auth_kv (key, value) VALUES (?, ?)",
+        ("kirocli:social:token:acct-b", json.dumps(account_b)),
+    )
+
+    conn.commit()
+    conn.close()
+
+    return str(db_file)
+
+
 # =============================================================================
 # Enterprise Kiro IDE Fixtures (Issue #45)
 # =============================================================================

@@ -1,0 +1,124 @@
+{
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"title": "PRD Task Schema",
+	"description": "Executable task list converted from PRD markdown",
+	"type": "object",
+	"required": ["beadId", "tasks"],
+	"properties": {
+		"beadId": {
+			"type": "string",
+			"description": "Bead identifier (e.g., br-abc123)"
+		},
+		"prdName": {
+			"type": "string",
+			"description": "Optional slug for the PRD"
+		},
+		"tasks": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": ["id", "category", "description", "steps", "passes"],
+				"properties": {
+					"id": {
+						"type": "string",
+						"description": "Task identifier (e.g., functional-1, api-2)"
+					},
+					"category": {
+						"type": "string",
+						"description": "Task category (e.g., functional, api, db, ui)"
+					},
+					"description": {
+						"type": "string",
+						"description": "One sentence describing the end state"
+					},
+					"steps": {
+						"type": "array",
+						"items": { "type": "string" },
+						"description": "Verification steps that prove the task is complete"
+					},
+					"passes": {
+						"type": "boolean",
+						"default": false,
+						"description": "Whether all verification steps pass"
+					},
+					"metadata": {
+						"type": "object",
+						"description": "Task dependency and execution metadata",
+						"properties": {
+							"depends_on": {
+								"type": "array",
+								"items": { "type": "string" },
+								"description": "Task IDs that must complete first"
+							},
+							"parallel": {
+								"type": "boolean",
+								"default": true,
+								"description": "Can run concurrently with other parallel tasks"
+							},
+							"conflicts_with": {
+								"type": "array",
+								"items": { "type": "string" },
+								"description": "Task IDs that modify same files (cannot parallelize)"
+							},
+							"files": {
+								"type": "array",
+								"items": { "type": "string" },
+								"description": "Files this task will modify"
+							}
+						}
+					}
+				}
+			}
+		},
+		"context": {
+			"type": "object",
+			"description": "Technical context from the PRD",
+			"properties": {
+				"patterns": {
+					"type": "array",
+					"items": { "type": "string" },
+					"description": "Existing codebase patterns to follow"
+				},
+				"keyFiles": {
+					"type": "array",
+					"items": { "type": "string" },
+					"description": "Key files to reference"
+				},
+				"nonGoals": {
+					"type": "array",
+					"items": { "type": "string" },
+					"description": "Explicitly out of scope items"
+				}
+			}
+		},
+		"beadMetadata": {
+			"type": "object",
+			"description": "Bead-level metadata from PRD",
+			"properties": {
+				"depends_on": {
+					"type": "array",
+					"items": { "type": "string" },
+					"description": "Bead IDs that must complete before this one"
+				},
+				"parallel": {
+					"type": "boolean",
+					"description": "Can run concurrently with other parallel beads"
+				},
+				"conflicts_with": {
+					"type": "array",
+					"items": { "type": "string" },
+					"description": "Bead IDs that modify same files"
+				},
+				"blocks": {
+					"type": "array",
+					"items": { "type": "string" },
+					"description": "Bead IDs waiting on this one"
+				},
+				"estimated_hours": {
+					"type": "number",
+					"description": "Time estimate for planning"
+				}
+			}
+		}
+	}
+}

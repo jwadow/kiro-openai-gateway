@@ -205,86 +205,90 @@ class KiroHttpClient:
         last_error = None
         last_error_info: Optional[NetworkErrorInfo] = None
         
-        for attempt in range(max_retries):
-            try:
+        try:
+            for attempt in range(max_retries):
+                try:
                 # Get current token
-                token = await self.auth_manager.get_access_token()
-                headers = get_kiro_headers(self.auth_manager, token)
+                    token = await self.auth_manager.get_access_token()
+                    headers = get_kiro_headers(self.auth_manager, token)
                 
-                if stream:
+                    if stream:
                     # Prevent CLOSE_WAIT connection leak (issue #38)
-                    headers["Connection"] = "close"
-                    req = client.build_request(method, url, json=json_data, headers=headers)
-                    logger.debug("Sending request to Kiro API...")
-                    response = await client.send(req, stream=True)
-                else:
-                    logger.debug("Sending request to Kiro API...")
-                    response = await client.request(method, url, json=json_data, headers=headers)
+                        headers["Connection"] = "close"
+                        req = client.build_request(method, url, json=json_data, headers=headers)
+                        logger.debug("Sending request to Kiro API...")
+                        response = await client.send(req, stream=True)
+                    else:
+                        logger.debug("Sending request to Kiro API...")
+                        response = await client.request(method, url, json=json_data, headers=headers)
                 
                 # Check status
-                if response.status_code == 200:
-                    return response
+                    if response.status_code == 200:
+                        return response
                 
                 # 403 - token expired, refresh and retry
-                if response.status_code == 403:
-                    logger.warning(f"Received 403, refreshing token (attempt {attempt + 1}/{MAX_RETRIES})")
-                    await self.auth_manager.force_refresh()
-                    continue
+                    if response.status_code == 403:
+                        logger.warning(f"Received 403, refreshing token (attempt {attempt + 1}/{MAX_RETRIES})")
+                        await self.auth_manager.force_refresh()
+                        continue
                 
                 # 429 - rate limit, wait and retry
-                if response.status_code == 429:
-                    delay = BASE_RETRY_DELAY * (2 ** attempt)
-                    logger.warning(f"Received 429, waiting {delay}s (attempt {attempt + 1}/{MAX_RETRIES})")
-                    await asyncio.sleep(delay)
-                    continue
+                    if response.status_code == 429:
+                        delay = BASE_RETRY_DELAY * (2 ** attempt)
+                        logger.warning(f"Received 429, waiting {delay}s (attempt {attempt + 1}/{MAX_RETRIES})")
+                        await asyncio.sleep(delay)
+                        continue
                 
                 # 5xx - server error, wait and retry
-                if 500 <= response.status_code < 600:
-                    delay = BASE_RETRY_DELAY * (2 ** attempt)
-                    logger.warning(f"Received {response.status_code}, waiting {delay}s (attempt {attempt + 1}/{MAX_RETRIES})")
-                    await asyncio.sleep(delay)
-                    continue
+                    if 500 <= response.status_code < 600:
+                        delay = BASE_RETRY_DELAY * (2 ** attempt)
+                        logger.warning(f"Received {response.status_code}, waiting {delay}s (attempt {attempt + 1}/{MAX_RETRIES})")
+                        await asyncio.sleep(delay)
+                        continue
                 
                 # Other errors - return as is
-                return response
+                    return response
                 
-            except httpx.TimeoutException as e:
-                last_error = e
+                except httpx.TimeoutException as e:
+                    last_error = e
                 
                 # Classify timeout error for user-friendly messaging
-                error_info = classify_network_error(e)
-                last_error_info = error_info
+                    error_info = classify_network_error(e)
+                    last_error_info = error_info
                 
                 # Log with user-friendly message
-                short_msg = get_short_error_message(error_info)
+                    short_msg = get_short_error_message(error_info)
                 
-                if error_info.is_retryable and attempt < max_retries - 1:
-                    delay = BASE_RETRY_DELAY * (2 ** attempt)
-                    logger.warning(f"{short_msg} - waiting {delay}s (attempt {attempt + 1}/{max_retries})")
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error(f"{short_msg} - no more retries (attempt {attempt + 1}/{max_retries})")
-                    if not error_info.is_retryable:
-                        break  # Don't retry non-retryable errors
+                    if error_info.is_retryable and attempt < max_retries - 1:
+                        delay = BASE_RETRY_DELAY * (2 ** attempt)
+                        logger.warning(f"{short_msg} - waiting {delay}s (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(f"{short_msg} - no more retries (attempt {attempt + 1}/{max_retries})")
+                        if not error_info.is_retryable:
+                            break  # Don't retry non-retryable errors
                 
-            except httpx.RequestError as e:
-                last_error = e
+                except httpx.RequestError as e:
+                    last_error = e
                 
                 # Classify the error for user-friendly messaging
-                error_info = classify_network_error(e)
-                last_error_info = error_info
+                    error_info = classify_network_error(e)
+                    last_error_info = error_info
                 
                 # Log with user-friendly message
-                short_msg = get_short_error_message(error_info)
+                    short_msg = get_short_error_message(error_info)
                 
-                if error_info.is_retryable and attempt < max_retries - 1:
-                    delay = BASE_RETRY_DELAY * (2 ** attempt)
-                    logger.warning(f"{short_msg} - waiting {delay}s (attempt {attempt + 1}/{max_retries})")
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error(f"{short_msg} - no more retries (attempt {attempt + 1}/{max_retries})")
-                    if not error_info.is_retryable:
-                        break  # Don't retry non-retryable errors
+                    if error_info.is_retryable and attempt < max_retries - 1:
+                        delay = BASE_RETRY_DELAY * (2 ** attempt)
+                        logger.warning(f"{short_msg} - waiting {delay}s (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(f"{short_msg} - no more retries (attempt {attempt + 1}/{max_retries})")
+                        if not error_info.is_retryable:
+                            break  # Don't retry non-retryable errors
+        finally:
+            # Clear request-scoped account selection after request lifecycle.
+            self.auth_manager.clear_request_account()
         
         # All attempts exhausted - provide detailed, user-friendly error message
         if last_error_info:

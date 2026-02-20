@@ -152,6 +152,7 @@ API_KEY_SOURCE: str = _API_KEY_SOURCE_RAW if _API_KEY_SOURCE_RAW in ("env", "mon
 # MongoDB settings for API key lookup and billing
 MONGODB_URI: str = os.getenv("MONGODB_URI", "")
 MONGODB_DB_NAME: str = os.getenv("MONGODB_DB_NAME", "fproxy")
+MONGODB_AUTH_KV_COLLECTION: str = os.getenv("MONGODB_AUTH_KV_COLLECTION", "auth_kv")
 MONGODB_USERS_COLLECTION: str = os.getenv("MONGODB_USERS_COLLECTION", "usersNew")
 MONGODB_CREDITS_COLLECTION: str = os.getenv("MONGODB_CREDITS_COLLECTION", "creditsNew")
 MONGODB_USER_API_KEY_FIELD: str = os.getenv("MONGODB_USER_API_KEY_FIELD", "apiKey")
@@ -302,6 +303,21 @@ KIRO_CREDS_FILE: str = str(Path(_raw_creds_file)) if _raw_creds_file else ""
 # or ~/.local/share/amazon-q/data.sqlite3 (amazon-q-developer-cli)
 _raw_cli_db_file = _get_raw_env_value("KIRO_CLI_DB_FILE") or os.getenv("KIRO_CLI_DB_FILE", "")
 KIRO_CLI_DB_FILE: str = str(Path(_raw_cli_db_file)) if _raw_cli_db_file else ""
+
+# Source for Kiro upstream auth credentials:
+# - auto: preserve existing priority (sqlite -> file -> env)
+# - sqlite: force KIRO_CLI_DB_FILE
+# - file: force KIRO_CREDS_FILE
+# - env: force REFRESH_TOKEN/PROFILE_ARN
+# - mongodb: load from MongoDB auth_kv collection
+_KIRO_AUTH_SOURCE_RAW = os.getenv("KIRO_AUTH_SOURCE", "auto").strip().lower()
+KIRO_AUTH_SOURCE: str = _KIRO_AUTH_SOURCE_RAW if _KIRO_AUTH_SOURCE_RAW in (
+    "auto",
+    "sqlite",
+    "file",
+    "env",
+    "mongodb",
+) else "auto"
 
 # ==================================================================================================
 # Kiro API URL Templates

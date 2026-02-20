@@ -30,7 +30,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
+from fastapi import APIRouter, Depends, HTTPException, Request, Security
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
 from loguru import logger
@@ -50,7 +50,7 @@ from kiro.auth import KiroAuthManager, AuthType
 from kiro.cache import ModelInfoCache
 from kiro.model_resolver import ModelResolver
 from kiro.converters_openai import build_kiro_payload
-from kiro.streaming_openai import stream_kiro_to_openai, collect_stream_response, stream_with_first_token_retry
+from kiro.streaming_openai import stream_kiro_to_openai, collect_stream_response
 from kiro.http_client import KiroHttpClient
 from kiro.tokenizer import count_message_tokens, count_tools_tokens
 from kiro.utils import generate_conversation_id
@@ -329,8 +329,14 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
     # profileArn is only needed for Kiro Desktop auth
     # AWS SSO OIDC (Builder ID) users don't need profileArn and it causes 403 if sent
     profile_arn_for_payload = ""
-    if auth_manager.auth_type == AuthType.KIRO_DESKTOP and auth_manager.profile_arn:
-        profile_arn_for_payload = auth_manager.profile_arn
+    if auth_manager.auth_type == AuthType.KIRO_DESKTOP:
+        if hasattr(auth_manager, "get_profile_arn_for_request"):
+            request_profile_arn = await auth_manager.get_profile_arn_for_request()
+        else:
+            request_profile_arn = auth_manager.profile_arn
+
+        if request_profile_arn:
+            profile_arn_for_payload = request_profile_arn
     
     try:
         kiro_payload = build_kiro_payload(
@@ -522,9 +528,9 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                         error_msg = str(streaming_error) if str(streaming_error) else "(empty message)"
                         logger.error(f"HTTP 500 - POST /v1/chat/completions (streaming) - [{error_type}] {error_msg[:100]}")
                     elif client_disconnected:
-                        logger.info(f"HTTP 200 - POST /v1/chat/completions (streaming) - client disconnected")
+                        logger.info("HTTP 200 - POST /v1/chat/completions (streaming) - client disconnected")
                     else:
-                        logger.info(f"HTTP 200 - POST /v1/chat/completions (streaming) - completed")
+                        logger.info("HTTP 200 - POST /v1/chat/completions (streaming) - completed")
                     # Write debug logs AFTER streaming completes
                     if debug_logger:
                         if streaming_error:
@@ -567,7 +573,7 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
             await http_client.close()
             
             # Log access log for non-streaming success
-            logger.info(f"HTTP 200 - POST /v1/chat/completions (non-streaming) - completed")
+            logger.info("HTTP 200 - POST /v1/chat/completions (non-streaming) - completed")
             
             # Write debug logs after non-streaming request completes
             if debug_logger:

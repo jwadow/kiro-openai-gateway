@@ -1,0 +1,83 @@
+{
+	"$schema": "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
+	"enabled": true,
+	"debug": false,
+	// "minimal" shows prune activity without noise; "detailed" shows token counts
+	"pruneNotification": "detailed",
+	// "chat" (in-conversation) or "toast" (system notification)
+	"pruneNotificationType": "toast",
+	// Commands: /dcp context, /dcp stats, /dcp sweep
+	"commands": {
+		"enabled": true,
+		// Protect these from /dcp sweep
+		"protectedTools": ["observation", "memory-update", "memory-search"]
+	},
+	"turnProtection": {
+		"enabled": true,
+		"turns": 4
+	},
+	// Protected file patterns - never auto-prune reads of these files
+	"protectedFilePatterns": [
+		"**/.env*",
+		"**/AGENTS.md",
+		"**/.opencode/**",
+		"**/.beads/**",
+		"**/package.json",
+		"**/tsconfig.json",
+		"**/biome.json"
+	],
+	"tools": {
+		"settings": {
+			"nudgeEnabled": true,
+			"nudgeFrequency": 10,
+			// v2.0.1: percentage support - 80% of model's context (most models = 128k)
+			"contextLimit": "80%",
+			// Protect state-modifying and critical workflow tools
+			// LSP excluded: ephemeral exploration, prune after understanding
+			"protectedTools": [
+				"write",
+				"edit",
+				"memory-update",
+				"observation",
+				"skill",
+				"skill_mcp",
+				"task",
+				"batch",
+				"todowrite",
+				"todoread"
+			]
+		},
+		// v2.0.0: permission model - "allow", "ask", or "deny"
+		"prune": {
+			"permission": "allow"
+		},
+		"distill": {
+			"permission": "allow",
+			"showDistillation": false
+		},
+		"compress": {
+			// v2.1.1: compress can have boundary matching issues - use ask for safety
+			"permission": "ask",
+			"showCompression": false
+		}
+	},
+	// Auto strategies - TOP LEVEL, not under tools
+	"strategies": {
+		// Dedup = zero LLM cost, high impact - always enable
+		"deduplication": {
+			"enabled": true,
+			"protectedTools": []
+		},
+		// Supersede writes = zero cost, removes redundant write inputs after read
+		// Note: default changed to false in beta, we explicitly enable
+		"supersedeWrites": {
+			"enabled": true
+		},
+		// Purge error inputs after N turns
+		"purgeErrors": {
+			"enabled": true,
+			"turns": 4,
+			"protectedTools": []
+		}
+	}
+}

@@ -1,0 +1,6 @@
+{
+	"augment-context-engine": {
+		"command": "npx",
+		"args": ["-y", "mcp-remote", "https://api.augmentcode.com/mcp"]
+	}
+}

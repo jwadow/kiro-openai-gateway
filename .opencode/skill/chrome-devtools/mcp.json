@@ -1,0 +1,19 @@
+{
+  "chrome-devtools": {
+    "command": "npx",
+    "args": ["-y", "chrome-devtools-mcp@latest", "--stdio"],
+    "includeTools": [
+      "take_snapshot",
+      "take_screenshot",
+      "navigate_page",
+      "new_page",
+      "list_pages",
+      "click",
+      "fill",
+      "hover",
+      "press_key",
+      "evaluate_script",
+      "wait_for"
+    ]
+  }
+}

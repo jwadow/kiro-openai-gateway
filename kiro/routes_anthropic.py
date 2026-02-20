@@ -28,7 +28,6 @@ Reference: https://docs.anthropic.com/en/api/messages
 import json
 from typing import Any, Dict, Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Security, Header
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
@@ -37,9 +36,6 @@ from loguru import logger
 from kiro.config import PROXY_API_KEY, API_KEY_SOURCE, BILLING_ENABLED
 from kiro.models_anthropic import (
     AnthropicMessagesRequest,
-    AnthropicMessagesResponse,
-    AnthropicErrorResponse,
-    AnthropicErrorDetail,
     TextContentBlock,
 )
 from kiro.auth import KiroAuthManager, AuthType
@@ -367,8 +363,14 @@ async def messages(
     # Build payload for Kiro
     # profileArn is only needed for Kiro Desktop auth
     profile_arn_for_payload = ""
-    if auth_manager.auth_type == AuthType.KIRO_DESKTOP and auth_manager.profile_arn:
-        profile_arn_for_payload = auth_manager.profile_arn
+    if auth_manager.auth_type == AuthType.KIRO_DESKTOP:
+        if hasattr(auth_manager, "get_profile_arn_for_request"):
+            request_profile_arn = await auth_manager.get_profile_arn_for_request()
+        else:
+            request_profile_arn = auth_manager.profile_arn
+
+        if request_profile_arn:
+            profile_arn_for_payload = request_profile_arn
     
     try:
         kiro_payload = anthropic_to_kiro(
@@ -566,9 +568,9 @@ async def messages(
                         error_msg = str(streaming_error) if str(streaming_error) else "(empty message)"
                         logger.error(f"HTTP 500 - POST /v1/messages (streaming) - [{error_type}] {error_msg[:100]}")
                     elif client_disconnected:
-                        logger.info(f"HTTP 200 - POST /v1/messages (streaming) - client disconnected")
+                        logger.info("HTTP 200 - POST /v1/messages (streaming) - client disconnected")
                     else:
-                        logger.info(f"HTTP 200 - POST /v1/messages (streaming) - completed")
+                        logger.info("HTTP 200 - POST /v1/messages (streaming) - completed")
                     
                     if debug_logger:
                         if streaming_error:
@@ -614,7 +616,7 @@ async def messages(
             
             await http_client.close()
             
-            logger.info(f"HTTP 200 - POST /v1/messages (non-streaming) - completed")
+            logger.info("HTTP 200 - POST /v1/messages (non-streaming) - completed")
             
             if debug_logger:
                 debug_logger.discard_buffers()

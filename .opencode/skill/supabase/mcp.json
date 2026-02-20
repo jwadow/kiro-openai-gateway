@@ -1,0 +1,27 @@
+{
+	"supabase": {
+		"command": "npx",
+		"args": ["-y", "@supabase/mcp-server-supabase@latest"],
+		"env": {
+			"SUPABASE_ACCESS_TOKEN": "${SUPABASE_ACCESS_TOKEN}"
+		},
+		"includeTools": [
+			"list_projects",
+			"get_project",
+			"list_organizations",
+			"list_tables",
+			"list_extensions",
+			"list_migrations",
+			"execute_sql",
+			"get_project_url",
+			"get_publishable_keys",
+			"generate_typescript_types",
+			"list_edge_functions",
+			"get_edge_function",
+			"deploy_edge_function",
+			"get_logs",
+			"get_advisors",
+			"search_docs"
+		]
+	}
+}
