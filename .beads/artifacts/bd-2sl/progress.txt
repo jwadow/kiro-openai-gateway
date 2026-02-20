@@ -1,0 +1,44 @@
+# Progress Log
+
+Bead: bd-2sl
+Started: 2026-02-20
+
+## Codebase Patterns
+
+- `kiro/auth.py` is the auth lifecycle source of truth.
+- `main.py` initializes one shared `KiroAuthManager` instance.
+- `kiro/routes_openai.py` and `kiro/routes_anthropic.py` rely on app-state auth manager.
+
+---
+
+## 2026-02-20 Start
+
+- Bead moved to `in_progress`.
+- Workspace choice: continue on current branch.
+- Converted PRD markdown to executable `prd.json` tasks.
+
+## 2026-02-20 Ship Execution
+
+- Implemented multi-account SQLite account pool loading with suffix-key discovery in `kiro/auth.py`.
+- Added deterministic round-robin selection with request-scoped account key and temporary quarantine on auth failures in `kiro/auth.py`.
+- Added request-scoped profile ARN resolution (`get_profile_arn_for_request`) and route integration in `kiro/routes_openai.py` and `kiro/routes_anthropic.py`.
+- Added request cleanup hook (`clear_request_account`) in `kiro/http_client.py` request lifecycle.
+- Added new fixture `temp_sqlite_db_round_robin` in `tests/conftest.py`.
+- Added round-robin tests in `tests/unit/test_auth_manager.py`:
+  - load multiple accounts from sqlite
+  - deterministic A->B->A selection
+  - quarantine skip behavior
+  - account-scoped sqlite persistence
+
+### Verification Evidence
+
+- `pytest tests/unit/test_auth_manager.py -k "round_robin or quarantine or selected_account_key or multiple_accounts" -v` -> pass (4 selected tests).
+- `pytest tests/unit/test_auth_manager.py -k "sqlite and load" -v` -> pass.
+- `pytest tests/unit/test_auth_manager.py -k "refresh and retry and sqlite" -v` -> pass.
+- `API_KEY_SOURCE=env pytest tests/unit/test_routes_openai.py tests/unit/test_routes_anthropic.py -v` -> pass.
+- `API_KEY_SOURCE=env pytest tests/unit/test_auth_manager.py tests/unit/test_config.py -v` -> 132 passed, 1 failed (known unrelated `tests/unit/test_config.py::TestFallbackModelsIntegration::test_fallback_models_appear_in_available_models`).
+- `API_KEY_SOURCE=env pytest -v` -> 1415 passed, 13 failed, 3 warnings; failures are in config/model-resolver suites outside this bead scope.
+
+### Open/Blocked
+
+- Global suite still has pre-existing failures outside bead scope (`tests/unit/test_config.py`, `tests/unit/test_model_resolver.py`).

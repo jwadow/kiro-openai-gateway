@@ -2612,6 +2612,229 @@ class TestKiroAuthManagerSocialLogin:
 
 
 # =============================================================================
+# Tests for Multi-Account Round-Robin SQLite Support
+# =============================================================================
+
+class TestKiroAuthManagerRoundRobin:
+    """Tests for DB-backed multi-account round-robin behavior."""
+
+    def test_loads_multiple_accounts_from_sqlite(self, temp_sqlite_db_round_robin):
+        """
+        What it does: Verifies manager loads base and suffixed token keys into account pool.
+        Purpose: Ensure DB-backed multi-account discovery works.
+        """
+        manager = KiroAuthManager(sqlite_db=temp_sqlite_db_round_robin)
+
+        assert len(manager._account_pool) == 2
+        keys = [account["key"] for account in manager._account_pool]
+        assert "kirocli:social:token" in keys
+        assert "kirocli:social:token:acct-b" in keys
+
+    @pytest.mark.asyncio
+    async def test_round_robin_cycles_accounts_deterministically(self, temp_sqlite_db_round_robin):
+        """
+        What it does: Verifies round-robin uses deterministic account sequence.
+        Purpose: Ensure request distribution follows A -> B -> A order.
+        """
+        manager = KiroAuthManager(sqlite_db=temp_sqlite_db_round_robin)
+
+        profile_a = await manager.get_profile_arn_for_request()
+        token_a = await manager.get_access_token()
+        manager.clear_request_account()
+
+        profile_b = await manager.get_profile_arn_for_request()
+        token_b = await manager.get_access_token()
+        manager.clear_request_account()
+
+        profile_a_again = await manager.get_profile_arn_for_request()
+        token_a_again = await manager.get_access_token()
+        manager.clear_request_account()
+
+        assert profile_a == "arn:aws:codewhisperer:us-east-1:123456789:profile/account-a"
+        assert token_a == "social_access_a"
+        assert profile_b == "arn:aws:codewhisperer:us-east-1:123456789:profile/account-b"
+        assert token_b == "social_access_b"
+        assert profile_a_again == profile_a
+        assert token_a_again == token_a
+
+    @pytest.mark.asyncio
+    async def test_quarantine_skips_failing_account(self, temp_sqlite_db_round_robin):
+        """
+        What it does: Verifies failing account is quarantined and next account is selected.
+        Purpose: Ensure unhealthy account does not block token retrieval.
+        """
+        manager = KiroAuthManager(sqlite_db=temp_sqlite_db_round_robin)
+
+        now = datetime.now(timezone.utc)
+        manager._account_pool[0]["expires_at"] = now - timedelta(minutes=1)
+        manager._account_pool[1]["expires_at"] = now + timedelta(hours=1)
+        manager._reload_active_account_from_sqlite_locked = Mock()
+        manager._refresh_token_request = AsyncMock(side_effect=ValueError("refresh failed"))
+
+        token = await manager.get_access_token()
+
+        assert token == "social_access_b"
+        assert manager._account_pool[0]["quarantine_until"] is not None
+        manager.clear_request_account()
+
+    def test_save_credentials_targets_selected_account_key(self, temp_sqlite_db_round_robin):
+        """
+        What it does: Verifies token persistence updates only active account key.
+        Purpose: Ensure account-scoped persistence for round-robin mode.
+        """
+        import sqlite3
+
+        manager = KiroAuthManager(sqlite_db=temp_sqlite_db_round_robin)
+        selected_account = manager._find_account_by_key("kirocli:social:token:acct-b")
+        assert selected_account is not None
+
+        manager._request_account_key.set("kirocli:social:token:acct-b")
+        manager._set_active_account(selected_account)
+        manager._access_token = "updated_access_b"
+        manager._refresh_token = "updated_refresh_b"
+        manager._expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        manager._save_credentials_to_sqlite()
+
+        conn = sqlite3.connect(temp_sqlite_db_round_robin)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM auth_kv WHERE key = ?", ("kirocli:social:token",))
+        row_a = cursor.fetchone()
+        cursor.execute("SELECT value FROM auth_kv WHERE key = ?", ("kirocli:social:token:acct-b",))
+        row_b = cursor.fetchone()
+        conn.close()
+
+        assert row_a is not None
+        assert row_b is not None
+        data_a = json.loads(row_a[0])
+        data_b = json.loads(row_b[0])
+
+        assert data_a["access_token"] == "social_access_a"
+        assert data_b["access_token"] == "updated_access_b"
+
+
+class TestKiroAuthManagerMongoDbSource:
+    """Tests for MongoDB auth_kv credential source."""
+
+    def test_load_credentials_from_mongodb_source(self):
+        """
+        What it does: Verifies MongoDB auth source loads base and suffixed token keys.
+        Purpose: Ensure upstream auth can be sourced from MongoDB auth_kv.
+        """
+        collection = Mock()
+        collection.find.return_value.sort.return_value = [
+            {
+                "key": "kirocli:social:token",
+                "value": {
+                    "access_token": "mongo_access_a",
+                    "refresh_token": "mongo_refresh_a",
+                    "expires_at": "2099-01-01T00:00:00Z",
+                    "profile_arn": "arn:aws:codewhisperer:us-east-1:123456789:profile/mongo-a",
+                    "provider": "google",
+                },
+            },
+            {
+                "key": "kirocli:social:token:acct-b",
+                "value": {
+                    "access_token": "mongo_access_b",
+                    "refresh_token": "mongo_refresh_b",
+                    "expires_at": "2099-01-01T00:00:00Z",
+                    "profile_arn": "arn:aws:codewhisperer:us-east-1:123456789:profile/mongo-b",
+                    "provider": "github",
+                },
+            },
+        ]
+
+        with patch("kiro.auth.MongoClient") as mock_client:
+            mock_client.return_value.__getitem__.return_value.__getitem__.return_value = collection
+            manager = KiroAuthManager(
+                auth_source="mongodb",
+                mongodb_uri="mongodb://localhost:27017",
+                mongodb_db_name="fproxy",
+                mongodb_collection="auth_kv",
+            )
+
+        assert len(manager._account_pool) == 2
+        assert manager._access_token == "mongo_access_a"
+        assert manager._refresh_token == "mongo_refresh_a"
+
+    def test_save_credentials_to_mongodb_targets_selected_account(self):
+        """
+        What it does: Verifies MongoDB persistence writes to selected account key.
+        Purpose: Ensure account-scoped save semantics for MongoDB source.
+        """
+        collection = Mock()
+        collection.find.return_value.sort.return_value = [
+            {
+                "key": "kirocli:social:token",
+                "value": {
+                    "access_token": "mongo_access_a",
+                    "refresh_token": "mongo_refresh_a",
+                    "expires_at": "2099-01-01T00:00:00Z",
+                },
+            },
+            {
+                "key": "kirocli:social:token:acct-b",
+                "value": {
+                    "access_token": "mongo_access_b",
+                    "refresh_token": "mongo_refresh_b",
+                    "expires_at": "2099-01-01T00:00:00Z",
+                },
+            },
+        ]
+
+        def fake_find_one(query, projection):
+            key = query.get("key")
+            if key == "kirocli:social:token:acct-b":
+                return {
+                    "value": {
+                        "access_token": "mongo_access_b",
+                        "refresh_token": "mongo_refresh_b",
+                        "expires_at": "2099-01-01T00:00:00Z",
+                    }
+                }
+            if key == "kirocli:social:token":
+                return {
+                    "value": {
+                        "access_token": "mongo_access_a",
+                        "refresh_token": "mongo_refresh_a",
+                        "expires_at": "2099-01-01T00:00:00Z",
+                    }
+                }
+            return None
+
+        collection.find_one.side_effect = fake_find_one
+        update_result = Mock()
+        update_result.modified_count = 1
+        update_result.matched_count = 1
+        collection.update_one.return_value = update_result
+
+        with patch("kiro.auth.MongoClient") as mock_client:
+            mock_client.return_value.__getitem__.return_value.__getitem__.return_value = collection
+            manager = KiroAuthManager(
+                auth_source="mongodb",
+                mongodb_uri="mongodb://localhost:27017",
+                mongodb_db_name="fproxy",
+                mongodb_collection="auth_kv",
+            )
+
+            account_b = manager._find_account_by_key("kirocli:social:token:acct-b")
+            assert account_b is not None
+
+            manager._request_account_key.set("kirocli:social:token:acct-b")
+            manager._set_active_account(account_b)
+            manager._access_token = "updated_mongo_access_b"
+            manager._refresh_token = "updated_mongo_refresh_b"
+            manager._expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+
+            manager._save_credentials_to_mongodb()
+
+        update_call = collection.update_one.call_args
+        assert update_call is not None
+        assert update_call.args[0] == {"key": "kirocli:social:token:acct-b"}
+        assert update_call.args[1]["$set"]["value"]["access_token"] == "updated_mongo_access_b"
+
+
+# =============================================================================
 # Tests for Enterprise Kiro IDE Support (Issue #45)
 # =============================================================================
 

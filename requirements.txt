@@ -2,6 +2,7 @@
 fastapi
 uvicorn[standard]
 httpx
+pymongo
 loguru
 python-dotenv
 tiktoken

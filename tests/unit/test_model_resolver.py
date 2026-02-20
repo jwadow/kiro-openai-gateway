@@ -14,6 +14,7 @@ Tests 5-layer model resolution architecture:
 import pytest
 from dataclasses import FrozenInstanceError
 
+import kiro.model_resolver as model_resolver_module
 from kiro.model_resolver import (
     normalize_model_name,
     get_model_id_for_kiro,
@@ -629,6 +630,21 @@ class TestGetModelIdForKiro:
         print(f"Comparing result: Expected 'claude-unknown-model', Got '{result}'")
         assert result == "claude-unknown-model"
 
+    def test_rejects_model_outside_allowlist_when_enabled(self, monkeypatch):
+        """
+        What it does: Rejects unsupported model when allowlist is enabled.
+        Goal: Ensure strict model mode blocks non-Haiku/Sonnet models.
+        """
+        monkeypatch.setattr(model_resolver_module, "MODEL_ALLOWLIST_ENABLED", True)
+        monkeypatch.setattr(
+            model_resolver_module,
+            "get_model_allowed_ids",
+            lambda: {"claude-haiku-4.5", "claude-sonnet-4.5"},
+        )
+
+        with pytest.raises(ValueError, match="Model is not allowed"):
+            get_model_id_for_kiro("claude-opus-4.5", {})
+
 
 # =============================================================================
 # TestModelResolver - Tests for ModelResolver class
@@ -859,6 +875,26 @@ class TestModelResolverGetAvailableModels:
         
         # Check uniqueness
         assert len(models) == len(set(models))
+
+    def test_get_available_models_filters_to_allowlist_when_enabled(self, model_resolver, monkeypatch):
+        """
+        What it does: Filters /v1/models list to allowed IDs when strict mode is enabled.
+        Goal: Ensure only Sonnet 4.5 and Haiku 4.5 remain visible.
+        """
+        monkeypatch.setattr(model_resolver_module, "MODEL_ALLOWLIST_ENABLED", True)
+        monkeypatch.setattr(
+            model_resolver_module,
+            "get_model_allowed_ids",
+            lambda: {
+                "claude-haiku-4.5",
+                "claude-sonnet-4.5",
+                "claude-haiku-4-5-20251001",
+                "claude-sonnet-4-5-20250929",
+            },
+        )
+
+        models = model_resolver.get_available_models()
+        assert set(models) == {"claude-haiku-4.5", "claude-sonnet-4.5"}
 
 
 class TestModelResolverGetModelsByFamily:

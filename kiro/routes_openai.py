@@ -28,14 +28,17 @@ Contains all API endpoints:
 
 import json
 from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
+from fastapi import APIRouter, Depends, HTTPException, Request, Security
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
 from loguru import logger
 
 from kiro.config import (
     PROXY_API_KEY,
+    API_KEY_SOURCE,
+    BILLING_ENABLED,
     APP_VERSION,
 )
 from kiro.models_openai import (
@@ -47,9 +50,22 @@ from kiro.auth import KiroAuthManager, AuthType
 from kiro.cache import ModelInfoCache
 from kiro.model_resolver import ModelResolver
 from kiro.converters_openai import build_kiro_payload
-from kiro.streaming_openai import stream_kiro_to_openai, collect_stream_response, stream_with_first_token_retry
+from kiro.streaming_openai import stream_kiro_to_openai, collect_stream_response
 from kiro.http_client import KiroHttpClient
+from kiro.tokenizer import count_message_tokens, count_tools_tokens
 from kiro.utils import generate_conversation_id
+from kiro.mongodb_store import (
+    find_active_user_by_api_key,
+    get_user_id_from_doc,
+    MongoStoreUnavailableError,
+)
+from kiro.billing import (
+    calculate_preflight_charge,
+    ensure_user_has_sufficient_credits,
+    deduct_credits_for_usage,
+    InsufficientCreditsError,
+    UnknownModelPricingError,
+)
 
 # Import debug_logger
 try:
@@ -62,7 +78,28 @@ except ImportError:
 api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 
 
-async def verify_api_key(auth_header: str = Security(api_key_header)) -> bool:
+def _extract_bearer_token(auth_header: Optional[str]) -> Optional[str]:
+    """
+    Extract bearer token from Authorization header.
+
+    Args:
+        auth_header: Raw Authorization header value.
+
+    Returns:
+        API key token if header format is valid, otherwise None.
+    """
+    if not auth_header:
+        return None
+    if not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header[len("Bearer "):]
+    return token if token else None
+
+
+async def verify_api_key(
+    auth_header: Optional[str],
+    request: Optional[Request] = None,
+) -> bool:
     """
     Verify API key in Authorization header.
     
@@ -77,10 +114,64 @@ async def verify_api_key(auth_header: str = Security(api_key_header)) -> bool:
     Raises:
         HTTPException: 401 if key is invalid or missing
     """
+    if API_KEY_SOURCE == "mongodb":
+        token = _extract_bearer_token(auth_header)
+        if token is None:
+            logger.warning("Access attempt with missing or malformed Bearer token in MongoDB auth mode.")
+            raise HTTPException(status_code=401, detail="Invalid or missing API Key")
+
+        try:
+            user_doc = find_active_user_by_api_key(token)
+        except MongoStoreUnavailableError:
+            raise HTTPException(status_code=503, detail="Authentication datastore unavailable")
+
+        if user_doc is None:
+            logger.warning("Access attempt with unknown or inactive API key in MongoDB auth mode.")
+            raise HTTPException(status_code=401, detail="Invalid or missing API Key")
+
+        try:
+            user_id = get_user_id_from_doc(user_doc)
+        except KeyError:
+            logger.error("MongoDB user document does not contain configured user ID field.")
+            raise HTTPException(status_code=500, detail="Authentication configuration error")
+
+        if request is not None:
+            request.state.auth_context = {
+                "source": "mongodb",
+                "user_id": user_id,
+                "api_key": token,
+            }
+        return True
+
     if not auth_header or auth_header != f"Bearer {PROXY_API_KEY}":
         logger.warning("Access attempt with invalid API key.")
         raise HTTPException(status_code=401, detail="Invalid or missing API Key")
+
+    if request is not None:
+        request.state.auth_context = {
+            "source": "env",
+            "user_id": None,
+            "api_key": PROXY_API_KEY,
+        }
+
     return True
+
+
+async def verify_api_key_dependency(
+    request: Request,
+    auth_header: Optional[str] = Security(api_key_header),
+) -> bool:
+    """
+    FastAPI dependency adapter for API-key verification.
+
+    Args:
+        request: Current request object.
+        auth_header: Authorization header value.
+
+    Returns:
+        True when request is authenticated.
+    """
+    return await verify_api_key(auth_header=auth_header, request=request)
 
 
 # --- Router ---
@@ -116,7 +207,7 @@ async def health():
         "version": APP_VERSION
     }
 
-@router.get("/v1/models", response_model=ModelList, dependencies=[Depends(verify_api_key)])
+@router.get("/v1/models", response_model=ModelList, dependencies=[Depends(verify_api_key_dependency)])
 async def get_models(request: Request):
     """
     Return list of available models.
@@ -150,7 +241,7 @@ async def get_models(request: Request):
     return ModelList(data=openai_models)
 
 
-@router.post("/v1/chat/completions", dependencies=[Depends(verify_api_key)])
+@router.post("/v1/chat/completions", dependencies=[Depends(verify_api_key_dependency)])
 async def chat_completions(request: Request, request_data: ChatCompletionRequest):
     """
     Chat completions endpoint - compatible with OpenAI API.
@@ -173,6 +264,8 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
     
     auth_manager: KiroAuthManager = request.app.state.auth_manager
     model_cache: ModelInfoCache = request.app.state.model_cache
+    auth_context: Dict[str, Any] = getattr(request.state, "auth_context", {})
+    billing_user_id = auth_context.get("user_id")
     
     # Note: prepare_new_request() and log_request_body() are now called by DebugLoggerMiddleware
     # This ensures debug logging works even for requests that fail Pydantic validation (422 errors)
@@ -236,8 +329,14 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
     # profileArn is only needed for Kiro Desktop auth
     # AWS SSO OIDC (Builder ID) users don't need profileArn and it causes 403 if sent
     profile_arn_for_payload = ""
-    if auth_manager.auth_type == AuthType.KIRO_DESKTOP and auth_manager.profile_arn:
-        profile_arn_for_payload = auth_manager.profile_arn
+    if auth_manager.auth_type == AuthType.KIRO_DESKTOP:
+        if hasattr(auth_manager, "get_profile_arn_for_request"):
+            request_profile_arn = await auth_manager.get_profile_arn_for_request()
+        else:
+            request_profile_arn = auth_manager.profile_arn
+
+        if request_profile_arn:
+            profile_arn_for_payload = request_profile_arn
     
     try:
         kiro_payload = build_kiro_payload(
@@ -256,6 +355,26 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
     except Exception as e:
         logger.warning(f"Failed to log Kiro request: {e}")
     
+    # Prepare data for fallback token counting and billing
+    # Convert Pydantic models to dicts for tokenizer
+    messages_for_tokenizer = [msg.model_dump() for msg in request_data.messages]
+    tools_for_tokenizer = [tool.model_dump() for tool in request_data.tools] if request_data.tools else None
+
+    if BILLING_ENABLED and billing_user_id is not None:
+        prompt_tokens = count_message_tokens(messages_for_tokenizer, apply_claude_correction=False)
+        tool_tokens = count_tools_tokens(tools_for_tokenizer) if tools_for_tokenizer else 0
+        try:
+            required_credits = calculate_preflight_charge(
+                model_id=request_data.model,
+                prompt_tokens=prompt_tokens,
+                tool_tokens=tool_tokens,
+            )
+            ensure_user_has_sufficient_credits(billing_user_id, required_credits)
+        except UnknownModelPricingError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except InsufficientCreditsError as exc:
+            raise HTTPException(status_code=402, detail=str(exc))
+
     # Create HTTP client with retry logic
     # For streaming: use per-request client to avoid CLOSE_WAIT leak on VPN disconnect (issue #54)
     # For non-streaming: use shared client for connection pooling
@@ -324,19 +443,18 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                 }
             )
         
-        # Prepare data for fallback token counting
-        # Convert Pydantic models to dicts for tokenizer
-        messages_for_tokenizer = [msg.model_dump() for msg in request_data.messages]
-        tools_for_tokenizer = [tool.model_dump() for tool in request_data.tools] if request_data.tools else None
-        
         if request_data.stream:
+            stream_client = http_client.client
+            if stream_client is None:
+                raise HTTPException(status_code=500, detail="Internal Server Error: HTTP client not initialized")
             # Streaming mode
             async def stream_wrapper():
                 streaming_error = None
                 client_disconnected = False
+                deduction_applied = False
                 try:
                     async for chunk in stream_kiro_to_openai(
-                        http_client.client,
+                        stream_client,
                         response,
                         request_data.model,
                         model_cache,
@@ -344,6 +462,50 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                         request_messages=messages_for_tokenizer,
                         request_tools=tools_for_tokenizer
                     ):
+                        if chunk.startswith("data: ") and chunk.strip() != "data: [DONE]":
+                            payload = chunk[len("data: "):].strip()
+                            try:
+                                payload_data = json.loads(payload)
+                            except json.JSONDecodeError:
+                                payload_data = None
+
+                            if isinstance(payload_data, dict):
+                                usage_data = payload_data.get("usage")
+                                if isinstance(usage_data, dict):
+                                    if BILLING_ENABLED and billing_user_id is not None and not deduction_applied:
+                                        try:
+                                            charged = deduct_credits_for_usage(billing_user_id, request_data.model, usage_data)
+                                        except UnknownModelPricingError as exc:
+                                            logger.error(f"OpenAI streaming billing failed (unknown model): {exc}")
+                                            error_payload = {
+                                                "error": {
+                                                    "message": str(exc),
+                                                    "type": "billing_error",
+                                                    "code": 400,
+                                                }
+                                            }
+                                            yield f"data: {json.dumps(error_payload)}\n\n"
+                                            yield "data: [DONE]\n\n"
+                                            return
+                                        except InsufficientCreditsError as exc:
+                                            logger.error(f"OpenAI streaming billing failed (insufficient credits): {exc}")
+                                            error_payload = {
+                                                "error": {
+                                                    "message": str(exc),
+                                                    "type": "billing_error",
+                                                    "code": 402,
+                                                }
+                                            }
+                                            yield f"data: {json.dumps(error_payload)}\n\n"
+                                            yield "data: [DONE]\n\n"
+                                            return
+
+                                        if "credits_used" in usage_data and "kiro_credits_used" not in usage_data:
+                                            usage_data["kiro_credits_used"] = usage_data["credits_used"]
+                                        usage_data["credits_used"] = float(charged)
+                                        payload_data["usage"] = usage_data
+                                        chunk = f"data: {json.dumps(payload_data, ensure_ascii=False)}\n\n"
+                                        deduction_applied = True
                         yield chunk
                 except GeneratorExit:
                     # Client disconnected - this is normal
@@ -366,9 +528,9 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                         error_msg = str(streaming_error) if str(streaming_error) else "(empty message)"
                         logger.error(f"HTTP 500 - POST /v1/chat/completions (streaming) - [{error_type}] {error_msg[:100]}")
                     elif client_disconnected:
-                        logger.info(f"HTTP 200 - POST /v1/chat/completions (streaming) - client disconnected")
+                        logger.info("HTTP 200 - POST /v1/chat/completions (streaming) - client disconnected")
                     else:
-                        logger.info(f"HTTP 200 - POST /v1/chat/completions (streaming) - completed")
+                        logger.info("HTTP 200 - POST /v1/chat/completions (streaming) - completed")
                     # Write debug logs AFTER streaming completes
                     if debug_logger:
                         if streaming_error:
@@ -381,8 +543,12 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         else:
             
             # Non-streaming mode - collect entire response
+            non_stream_client = http_client.client
+            if non_stream_client is None:
+                raise HTTPException(status_code=500, detail="Internal Server Error: HTTP client not initialized")
+
             openai_response = await collect_stream_response(
-                http_client.client,
+                non_stream_client,
                 response,
                 request_data.model,
                 model_cache,
@@ -390,11 +556,24 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                 request_messages=messages_for_tokenizer,
                 request_tools=tools_for_tokenizer
             )
+
+            if BILLING_ENABLED and billing_user_id is not None:
+                usage_payload = openai_response.get("usage") if isinstance(openai_response, dict) else None
+                if isinstance(usage_payload, dict):
+                    try:
+                        charged = deduct_credits_for_usage(billing_user_id, request_data.model, usage_payload)
+                        if "credits_used" in usage_payload and "kiro_credits_used" not in usage_payload:
+                            usage_payload["kiro_credits_used"] = usage_payload["credits_used"]
+                        usage_payload["credits_used"] = float(charged)
+                    except UnknownModelPricingError as exc:
+                        raise HTTPException(status_code=400, detail=str(exc))
+                    except InsufficientCreditsError as exc:
+                        raise HTTPException(status_code=402, detail=str(exc))
             
             await http_client.close()
             
             # Log access log for non-streaming success
-            logger.info(f"HTTP 200 - POST /v1/chat/completions (non-streaming) - completed")
+            logger.info("HTTP 200 - POST /v1/chat/completions (non-streaming) - completed")
             
             # Write debug logs after non-streaming request completes
             if debug_logger:

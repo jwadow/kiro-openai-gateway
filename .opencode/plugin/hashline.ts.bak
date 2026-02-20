@@ -1,0 +1,757 @@
+import * as fs from "fs";
+import * as path from "path";
+import type { Plugin } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin/tool";
+
+const z = tool.schema;
+
+/**
+ * Max line length — must match OpenCode's read tool truncation.
+ * Lines longer than this are displayed as `line.substring(0, 2000) + "..."`.
+ * We must hash the truncated form so computeFileHashes matches the read hook.
+ */
+const MAX_LINE_LENGTH = 2000;
+
+/**
+ * djb2 hash of trimmed line content, truncated to 3 hex chars.
+ * 3 hex chars = 4096 values. Collisions are rare and disambiguated by line number.
+ */
+function hashLine(content: string): string {
+	const trimmed = content.trimEnd();
+	let h = 5381;
+	for (let i = 0; i < trimmed.length; i++) {
+		h = ((h << 5) + h + trimmed.charCodeAt(i)) | 0;
+	}
+	return (h >>> 0).toString(16).slice(-3).padStart(3, "0");
+}
+
+/**
+ * Normalize a hash reference from model output.
+ * Handles: extra whitespace, trailing "|", spaces around ":"
+ * e.g. " 141:d81 " → "141:d81", "141:d81|" → "141:d81", "141: d81" → "141:d81"
+ */
+function normalizeHashRef(ref: string): string {
+	ref = ref.trim();
+	if (ref.endsWith("|")) ref = ref.slice(0, -1).trimEnd();
+	const colonIdx = ref.indexOf(":");
+	if (colonIdx > 0) {
+		const lineNum = ref.slice(0, colonIdx).trim();
+		const hash = ref.slice(colonIdx + 1).trim();
+		return `${lineNum}:${hash}`;
+	}
+	return ref;
+}
+
+/** Per-file mapping: hash ref (e.g. "42:a3f") → line content */
+const fileHashes = new Map<string, Map<string, string>>();
+
+/** Track file paths for apply_patch hash invalidation across before/after hooks */
+let pendingPatchFilePaths: string[] = [];
+
+interface HashlineEdit {
+	filePath: string;
+	startHash?: string;
+	endHash?: string;
+	afterHash?: string;
+	content: string;
+}
+
+/** Normalize all hash refs in an edit object */
+function normalizeEdit(edit: HashlineEdit): HashlineEdit {
+	return {
+		...edit,
+		startHash: edit.startHash ? normalizeHashRef(edit.startHash) : undefined,
+		endHash: edit.endHash ? normalizeHashRef(edit.endHash) : undefined,
+		afterHash: edit.afterHash ? normalizeHashRef(edit.afterHash) : undefined,
+	};
+}
+
+export const HashlinePlugin: Plugin = async ({ directory }) => {
+	function resolvePath(filePath: string): string {
+		if (path.isAbsolute(filePath)) return path.normalize(filePath);
+		return path.resolve(directory, filePath);
+	}
+
+	/**
+	 * Read file from disk and compute fresh hashes.
+	 * Lines are truncated before hashing to match OpenCode's read tool output.
+	 * Full (untruncated) content is stored for building oldString/patchText.
+	 */
+	function computeFileHashes(filePath: string): Map<string, string> {
+		const content = fs.readFileSync(filePath, "utf-8");
+		const lines = content.split("\n");
+		const hashes = new Map<string, string>();
+		for (let i = 0; i < lines.length; i++) {
+			// Truncate to match OpenCode's read tool (read.ts MAX_LINE_LENGTH)
+			const displayed =
+				lines[i].length > MAX_LINE_LENGTH
+					? lines[i].substring(0, MAX_LINE_LENGTH) + "..."
+					: lines[i];
+			const hash = hashLine(displayed);
+			hashes.set(`${i + 1}:${hash}`, lines[i]);
+		}
+		fileHashes.set(filePath, hashes);
+		return hashes;
+	}
+
+	/** Get line content by line number from hash map */
+	function getLineByNumber(
+		hashes: Map<string, string>,
+		lineNum: number,
+	): string | undefined {
+		for (const [ref, content] of hashes) {
+			if (ref.startsWith(`${lineNum}:`)) return content;
+		}
+		return undefined;
+	}
+
+	/** Find the actual hash ref for a line number (if it exists) */
+	function getHashRefByLineNumber(
+		hashes: Map<string, string>,
+		lineNum: number,
+	): string | undefined {
+		for (const ref of hashes.keys()) {
+			if (ref.startsWith(`${lineNum}:`)) return ref;
+		}
+		return undefined;
+	}
+
+	/** Validate a hash reference exists, re-reading file once if stale */
+	function validateHash(
+		filePath: string,
+		hashRef: string,
+		hashes: Map<string, string>,
+	): Map<string, string> {
+		if (hashes.has(hashRef)) return hashes;
+
+		// Re-read file and recompute hashes
+		try {
+			hashes = computeFileHashes(filePath);
+		} catch {
+			throw new Error(
+				`Cannot read file "${filePath}" to verify hash references.`,
+			);
+		}
+		if (hashes.has(hashRef)) return hashes;
+
+		// Hash not found — provide a diagnostic error message
+		const lineNum = Number.parseInt(hashRef.split(":")[0], 10);
+		const actualRef = getHashRefByLineNumber(hashes, lineNum);
+
+		if (actualRef) {
+			throw new Error(
+				[
+					`Hash reference "${hashRef}" not found.`,
+					`Line ${lineNum} now has hash "${actualRef}".`,
+					`The file has changed since last read. Please re-read the file.`,
+				].join(" "),
+			);
+		}
+		throw new Error(
+			[
+				`Hash reference "${hashRef}" not found.`,
+				`Line ${lineNum} does not exist in the file (${hashes.size} lines total).`,
+				`Please re-read the file.`,
+			].join(" "),
+		);
+	}
+
+	/** Ensure hashes exist for a file, computing them if needed */
+	function ensureHashes(filePath: string): Map<string, string> | undefined {
+		let hashes = fileHashes.get(filePath);
+		if (!hashes) {
+			try {
+				hashes = computeFileHashes(filePath);
+			} catch {
+				return undefined;
+			}
+		}
+		return hashes;
+	}
+
+	/** Collect old lines from a line range, throwing if any are missing */
+	function collectRange(
+		filePath: string,
+		hashes: Map<string, string>,
+		startLine: number,
+		endLine: number,
+	): string[] {
+		const lines: string[] = [];
+		for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
+			const content = getLineByNumber(hashes, lineNum);
+			if (content === undefined) {
+				fileHashes.delete(filePath);
+				throw new Error(
+					`No hash found for line ${lineNum} in range ${startLine}-${endLine}. The file may have changed. Please re-read the file.`,
+				);
+			}
+			lines.push(content);
+		}
+		return lines;
+	}
+
+	/** Generate patch @@ chunk lines for a single hashline edit */
+	function generatePatchChunk(
+		filePath: string,
+		edit: HashlineEdit,
+		hashes: Map<string, string>,
+	): string[] {
+		const chunk: string[] = [];
+
+		if (edit.afterHash) {
+			hashes = validateHash(filePath, edit.afterHash, hashes);
+			const anchorContent = hashes.get(edit.afterHash)!;
+			const anchorLine = Number.parseInt(edit.afterHash.split(":")[0], 10);
+			const ctx =
+				anchorLine > 1 ? (getLineByNumber(hashes, anchorLine - 1) ?? "") : "";
+			chunk.push(`@@ ${ctx}`);
+			chunk.push(` ${anchorContent}`);
+			for (const line of edit.content.split("\n")) {
+				chunk.push(`+${line}`);
+			}
+		} else if (edit.startHash) {
+			hashes = validateHash(filePath, edit.startHash, hashes);
+			if (edit.endHash) {
+				hashes = validateHash(filePath, edit.endHash, hashes);
+			}
+
+			const startLine = Number.parseInt(edit.startHash.split(":")[0], 10);
+			const endLine = edit.endHash
+				? Number.parseInt(edit.endHash.split(":")[0], 10)
+				: startLine;
+
+			if (endLine < startLine) {
+				throw new Error(
+					`endHash line (${endLine}) must be >= startHash line (${startLine})`,
+				);
+			}
+
+			const ctx =
+				startLine > 1 ? (getLineByNumber(hashes, startLine - 1) ?? "") : "";
+			chunk.push(`@@ ${ctx}`);
+
+			const oldLines = collectRange(filePath, hashes, startLine, endLine);
+			for (const line of oldLines) {
+				chunk.push(`-${line}`);
+			}
+			for (const line of edit.content.split("\n")) {
+				chunk.push(`+${line}`);
+			}
+		}
+
+		return chunk;
+	}
+
+	/**
+	 * Apply multiple hashline edits to a file's lines array (in-place).
+	 * Edits are sorted descending by line number and applied bottom-to-top
+	 * so earlier indices aren't affected by insertions/deletions.
+	 */
+	function applyEditsToLines(
+		filePath: string,
+		edits: HashlineEdit[],
+		lines: string[],
+		hashes: Map<string, string>,
+	): void {
+		// Sort descending by line number (apply from bottom to top)
+		const sorted = [...edits].sort((a, b) => {
+			const lineA = Number.parseInt(
+				(a.startHash || a.afterHash || "0").split(":")[0],
+				10,
+			);
+			const lineB = Number.parseInt(
+				(b.startHash || b.afterHash || "0").split(":")[0],
+				10,
+			);
+			return lineB - lineA;
+		});
+
+		for (const edit of sorted) {
+			if (edit.afterHash) {
+				hashes = validateHash(filePath, edit.afterHash, hashes);
+				const anchorLine = Number.parseInt(edit.afterHash.split(":")[0], 10);
+				const newLines = edit.content.split("\n");
+				// Insert after anchorLine (1-indexed → splice at anchorLine)
+				lines.splice(anchorLine, 0, ...newLines);
+			} else if (edit.startHash) {
+				hashes = validateHash(filePath, edit.startHash, hashes);
+				if (edit.endHash) {
+					hashes = validateHash(filePath, edit.endHash, hashes);
+				}
+				const startLine = Number.parseInt(edit.startHash.split(":")[0], 10);
+				const endLine = edit.endHash
+					? Number.parseInt(edit.endHash.split(":")[0], 10)
+					: startLine;
+
+				if (endLine < startLine) {
+					throw new Error(
+						`endHash line (${endLine}) must be >= startHash line (${startLine})`,
+					);
+				}
+
+				const newLines = edit.content.split("\n");
+				// Replace lines startLine..endLine (1-indexed)
+				lines.splice(startLine - 1, endLine - startLine + 1, ...newLines);
+			}
+		}
+	}
+
+	/** Hashline edit schema — shared shape for individual edits */
+	const editShape = {
+		filePath: z.string().describe("The absolute path to the file to modify"),
+		startHash: z
+			.string()
+			.optional()
+			.describe('Hash reference for the start line to replace (e.g. "42:a3f")'),
+		endHash: z
+			.string()
+			.optional()
+			.describe(
+				"Hash reference for the end line (for multi-line range replacement)",
+			),
+		afterHash: z
+			.string()
+			.optional()
+			.describe("Hash reference for the line to insert after (no replacement)"),
+		content: z.string().describe("The new content to insert or replace with"),
+	};
+
+	/** Schema for edit tool — edits array, single file per call */
+	const editParams = z.object({
+		edits: z
+			.array(z.object(editShape))
+			.describe(
+				"Array of edits to apply. All edits must target the same file.",
+			),
+	});
+
+	/** Schema for apply_patch tool — edits array, multi-file supported */
+	const patchParams = z.object({
+		edits: z
+			.array(z.object(editShape))
+			.describe(
+				"Array of edits to apply. Multiple files and multiple edits per file are supported.",
+			),
+	});
+
+	const editDescription = [
+		"Edit a file using hashline references from the most recent read output.",
+		"Each line is tagged as `<line>:<hash>| <content>`.",
+		"Pass an `edits` array with one or more edits (all must target the same file).",
+		"",
+		"Three operations per edit:",
+		"1. Replace line:  startHash only → replaces that single line",
+		"2. Replace range: startHash + endHash → replaces all lines in range",
+		"3. Insert after:  afterHash → inserts content after that line (no replacement)",
+	].join("\n");
+
+	const patchDescription = [
+		"Edit one or more files using hashline references from read output.",
+		"Each line is tagged as `<line>:<hash>| <content>`.",
+		"Pass an `edits` array — multiple files and multiple edits per file are supported.",
+		"",
+		"Three operations per edit:",
+		"1. Replace line:  startHash only → replaces that single line",
+		"2. Replace range: startHash + endHash → replaces all lines in range",
+		"3. Insert after:  afterHash → inserts content after that line (no replacement)",
+	].join("\n");
+
+	return {
+		// ── Read: tag each line with its content hash ──────────────────────
+		"tool.execute.after": async (input, output) => {
+			if (input.tool === "edit") {
+				// Recompute hashes from the edited file so subsequent edits
+				// get diagnostic "line N now has hash X" errors instead of
+				// a generic "not found" when using stale refs.
+				const filePath = resolvePath(input.args.filePath);
+				try {
+					computeFileHashes(filePath);
+				} catch {
+					fileHashes.delete(filePath);
+				}
+				return;
+			}
+
+			if (input.tool === "apply_patch") {
+				for (const fp of pendingPatchFilePaths) {
+					try {
+						computeFileHashes(fp);
+					} catch {
+						fileHashes.delete(fp);
+					}
+				}
+				pendingPatchFilePaths = [];
+				return;
+			}
+
+			if (input.tool !== "read") return;
+
+			// Skip directory reads
+			if (output.output.includes("<type>directory</type>")) return;
+
+			// Extract absolute file path from output and normalize it
+			const pathMatch = output.output.match(/<path>(.+?)<\/path>/);
+			if (!pathMatch) return;
+			const filePath = path.normalize(pathMatch[1]);
+
+			// Transform content lines: "N: content" → "N:hash| content"
+			// The first line is concatenated with <content> (no newline), so we
+			// match an optional <content> prefix and preserve it in the output.
+			const hashes = new Map<string, string>();
+			output.output = output.output.replace(
+				/^(<content>)?(\d+): (.*)$/gm,
+				(
+					_match,
+					prefix: string | undefined,
+					lineNum: string,
+					content: string,
+				) => {
+					const hash = hashLine(content);
+					const ref = `${lineNum}:${hash}`;
+					hashes.set(ref, content);
+					return `${prefix ?? ""}${lineNum}:${hash}| ${content}`;
+				},
+			);
+
+			if (hashes.size > 0) {
+				// Merge with existing hashes (supports partial reads / offset reads)
+				const existing = fileHashes.get(filePath);
+				if (existing) {
+					for (const [ref, content] of hashes) {
+						existing.set(ref, content);
+					}
+				} else {
+					fileHashes.set(filePath, hashes);
+				}
+			}
+		},
+
+		// ── Tool schema: replace params with hash references ─────────────
+		// Requires PR #4956 (tool.definition hook) to take effect.
+		// OpenCode shows `edit` for Anthropic models, `apply_patch` for Codex.
+		"tool.definition": async (input: any, output: any) => {
+			if (input.toolID === "edit") {
+				output.description = editDescription;
+				output.parameters = editParams;
+			} else if (input.toolID === "apply_patch") {
+				output.description = patchDescription;
+				output.parameters = patchParams;
+			}
+		},
+
+		// ── System prompt: instruct the model to use hashline edits ────────
+		"experimental.chat.system.transform": async (_input: any, output: any) => {
+			output.system.push(
+				[
+					"## Hashline Edit Mode (MANDATORY)",
+					"",
+					"When you read a file, each line is tagged with a hash: `<lineNumber>:<hash>| <content>`.",
+					"You MUST use these hash references when editing files. Do NOT use oldString/newString or patchText.",
+					"",
+					"Pass an `edits` array with one or more edits. Each edit has: filePath, and one of:",
+					"",
+					"1. **Replace line** — `startHash` + `content`:",
+					'   `{ filePath: "...", startHash: "3:cc7", content: "new line" }`',
+					"",
+					"2. **Replace range** — `startHash` + `endHash` + `content`:",
+					'   `{ filePath: "...", startHash: "3:cc7", endHash: "5:e60", content: "line3\\nline4\\nline5" }`',
+					"",
+					"3. **Insert after** — `afterHash` + `content`:",
+					'   `{ filePath: "...", afterHash: "3:cc7", content: "  inserted line" }`',
+					"",
+					"Multiple edits can be batched in a single call:",
+					'   `{ edits: [{ filePath: "...", startHash: "3:cc7", content: "..." }, { filePath: "...", afterHash: "7:e2c", content: "..." }] }`',
+					"",
+					"IMPORTANT: The hash value (e.g. `cc7`) is the EXACT 3-character code shown after the line number and colon.",
+					"Copy it exactly as shown — do NOT include the `|` separator or any surrounding spaces.",
+					"Example: for line `42:a3f| function hello()`, the hash reference is `42:a3f` (not `42:a3f|`).",
+					"",
+					"NEVER pass oldString, newString, or patchText. ALWAYS use the edits array with hash references.",
+				].join("\n"),
+			);
+		},
+
+		// ── Edit/Patch: resolve hash references before built-in tool runs ─
+		"tool.execute.before": async (input, output) => {
+			// ── apply_patch: resolve hashes → generate patchText ──
+			if (input.tool === "apply_patch") {
+				const args = output.args;
+
+				// Raw patchText with no hashline args → let normal patch through
+				if (args.patchText && !args.edits && !args.startHash && !args.afterHash)
+					return;
+
+				// ── Multi-file edits array ──
+				if (args.edits && Array.isArray(args.edits)) {
+					// Normalize all hash refs up front
+					const edits = (args.edits as HashlineEdit[]).map(normalizeEdit);
+
+					// Group edits by file path (preserving order within each file)
+					const editsByFile = new Map<
+						string,
+						{ absPath: string; relPath: string; edits: HashlineEdit[] }
+					>();
+
+					for (const edit of edits) {
+						const absPath = resolvePath(edit.filePath);
+						let entry = editsByFile.get(absPath);
+						if (!entry) {
+							const relPath = path
+								.relative(directory, absPath)
+								.split(path.sep)
+								.join("/");
+							entry = { absPath, relPath, edits: [] };
+							editsByFile.set(absPath, entry);
+						}
+						entry.edits.push(edit);
+					}
+
+					const patchLines: string[] = ["*** Begin Patch"];
+					const editedPaths: string[] = [];
+
+					for (const [absPath, { relPath, edits }] of editsByFile) {
+						editedPaths.push(absPath);
+						const hashes = ensureHashes(absPath);
+						if (!hashes) continue;
+
+						// Sort edits by line number so chunks apply top-to-bottom
+						edits.sort((a, b) => {
+							const lineA = Number.parseInt(
+								(a.startHash || a.afterHash || "0").split(":")[0],
+								10,
+							);
+							const lineB = Number.parseInt(
+								(b.startHash || b.afterHash || "0").split(":")[0],
+								10,
+							);
+							return lineA - lineB;
+						});
+
+						// One *** Update File section with multiple @@ chunks
+						patchLines.push(`*** Update File: ${relPath}`);
+
+						for (const edit of edits) {
+							const chunkLines = generatePatchChunk(absPath, edit, hashes);
+							patchLines.push(...chunkLines);
+						}
+					}
+
+					patchLines.push("*** End Patch");
+
+					pendingPatchFilePaths = editedPaths;
+					args.patchText = patchLines.join("\n");
+					delete args.edits;
+					return;
+				}
+
+				// ── Single-file fallback (backwards compat) ──
+				if (!args.startHash && !args.afterHash) return;
+
+				const filePath = resolvePath(args.filePath);
+				pendingPatchFilePaths = [filePath];
+				const relativePath = path
+					.relative(directory, filePath)
+					.split(path.sep)
+					.join("/");
+
+				const hashes = ensureHashes(filePath);
+				if (!hashes) return;
+
+				const edit: HashlineEdit = normalizeEdit({
+					filePath: args.filePath,
+					startHash: args.startHash,
+					endHash: args.endHash,
+					afterHash: args.afterHash,
+					content: args.content,
+				});
+				const patchLines: string[] = [
+					"*** Begin Patch",
+					`*** Update File: ${relativePath}`,
+				];
+				patchLines.push(...generatePatchChunk(filePath, edit, hashes));
+				patchLines.push("*** End Patch");
+
+				args.patchText = patchLines.join("\n");
+
+				delete args.filePath;
+				delete args.startHash;
+				delete args.endHash;
+				delete args.afterHash;
+				delete args.content;
+				return;
+			}
+
+			// ── edit: resolve hashes → oldString/newString ──
+			if (input.tool !== "edit") return;
+
+			const args = output.args;
+
+			// ── Multi-edit via edits array ──
+			if (args.edits && Array.isArray(args.edits)) {
+				// Normalize all hash refs up front
+				const edits = (args.edits as HashlineEdit[]).map(normalizeEdit);
+				if (edits.length === 0) return;
+
+				// All edits must target the same file (edit tool is single-file)
+				const filePath = resolvePath(edits[0].filePath);
+				const uniqueFiles = new Set(edits.map((e) => resolvePath(e.filePath)));
+				if (uniqueFiles.size > 1) {
+					throw new Error(
+						"The edit tool supports one file per call. Make separate calls for each file.",
+					);
+				}
+
+				let hashes = ensureHashes(filePath);
+				if (!hashes) return;
+
+				// Validate all hashes up front
+				for (const edit of edits) {
+					if (edit.afterHash) {
+						hashes = validateHash(filePath, edit.afterHash, hashes);
+					} else if (edit.startHash) {
+						hashes = validateHash(filePath, edit.startHash, hashes);
+						if (edit.endHash)
+							hashes = validateHash(filePath, edit.endHash, hashes);
+					}
+				}
+
+				// Read original file, apply all edits, produce oldString/newString
+				const originalContent = fs.readFileSync(filePath, "utf-8");
+				const lines = originalContent.split("\n");
+				applyEditsToLines(filePath, edits, lines, hashes);
+				const newContent = lines.join("\n");
+
+				args.filePath = filePath;
+				args.oldString = originalContent;
+				args.newString = newContent;
+				delete args.edits;
+				return;
+			}
+
+			// ── Single-edit fallback (backwards compat) ──
+
+			// Auto-convert oldString to hashline - reads file if needed
+			if (args.oldString && !args.startHash && !args.afterHash) {
+				const filePath = resolvePath(args.filePath);
+
+				// Read file and compute hashes if not cached
+				let hashes = fileHashes.get(filePath);
+				if (!hashes) {
+					hashes = computeFileHashes(filePath);
+				}
+
+				if (hashes && args.oldString && args.newString !== undefined) {
+					const oldContent = args.oldString;
+					const newContent = args.newString;
+
+					// Try exact match first
+					let found = false;
+					let matchedRef = "";
+					for (const [ref, lineContent] of hashes) {
+						if (lineContent.trim() === oldContent.trim()) {
+							// Validate hash is still valid
+							hashes = validateHash(filePath, ref, hashes);
+							matchedRef = ref;
+							found = true;
+							break;
+						}
+					}
+
+					// Try first line match if exact match failed
+					if (!found) {
+						const firstLine = oldContent.split("\n")[0].trim();
+						for (const [ref, lineContent] of hashes) {
+							if (lineContent.trim() === firstLine) {
+								// Validate hash is still valid
+								hashes = validateHash(filePath, ref, hashes);
+								matchedRef = ref;
+								found = true;
+								break;
+							}
+						}
+					}
+
+					if (found && matchedRef) {
+						args.startHash = matchedRef;
+						args.content = newContent;
+						delete args.oldString;
+						delete args.newString;
+					} else {
+						// Provide helpful error with suggestions
+						const searchKey = oldContent.split("\n")[0].substring(0, 30);
+						let suggestion = "";
+						for (const [ref, lineContent] of hashes) {
+							if (
+								lineContent.includes(searchKey) ||
+								searchKey.includes(lineContent.substring(0, 20))
+							) {
+								suggestion = ` Did you mean hash ${ref} for: ${lineContent.substring(0, 40)}...?`;
+								break;
+							}
+						}
+						throw new Error(
+							`Hashline Plugin: oldString does not match any line in the file.${suggestion}\n` +
+								"Please re-read the file and use hashline format (startHash/endHash/afterHash) instead of oldString/newString.",
+						);
+					}
+				}
+			}
+
+			// Only intercept hashline edits; fall through for normal edits
+			if (!args.startHash && !args.afterHash) return;
+
+			// Normalize hash refs
+			if (args.startHash) args.startHash = normalizeHashRef(args.startHash);
+			if (args.endHash) args.endHash = normalizeHashRef(args.endHash);
+			if (args.afterHash) args.afterHash = normalizeHashRef(args.afterHash);
+
+			// Insert after
+			if (args.afterHash) {
+				const filePath = resolvePath(args.filePath);
+				let hashes = ensureHashes(filePath);
+				if (!hashes) return;
+				hashes = validateHash(filePath, args.afterHash, hashes);
+
+				const anchorContent = hashes.get(args.afterHash)!;
+				args.oldString = anchorContent;
+				args.newString = anchorContent + "\n" + args.content;
+
+				delete args.afterHash;
+				delete args.content;
+				return;
+			}
+
+			// Replace (single line or range)
+			const filePath = resolvePath(args.filePath);
+			let hashes = ensureHashes(filePath);
+			if (!hashes) return;
+
+			hashes = validateHash(filePath, args.startHash, hashes);
+
+			const startLine = Number.parseInt(args.startHash.split(":")[0], 10);
+			const endLine = args.endHash
+				? Number.parseInt(args.endHash.split(":")[0], 10)
+				: startLine;
+
+			if (args.endHash) {
+				hashes = validateHash(filePath, args.endHash, hashes);
+			}
+
+			if (endLine < startLine) {
+				throw new Error(
+					`endHash line (${endLine}) must be >= startHash line (${startLine})`,
+				);
+			}
+
+			const rangeLines = collectRange(filePath, hashes, startLine, endLine);
+			args.oldString = rangeLines.join("\n");
+			args.newString = args.content;
+
+			delete args.startHash;
+			delete args.endHash;
+			delete args.content;
+		},
+	} as any;
+};
+
+export default HashlinePlugin;

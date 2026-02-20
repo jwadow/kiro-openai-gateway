@@ -1,0 +1,6 @@
+{
+	"v1": {
+		"command": "npx",
+		"args": ["-y", "mcp-remote", "https://api.v1.run/mcp"]
+	}
+}

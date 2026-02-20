@@ -1,0 +1,21 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"allowSyntheticDefaultImports": true,
+		"esModuleInterop": true,
+		"allowJs": true,
+		"strict": false,
+		"noEmit": true,
+		"declaration": true,
+		"outDir": "./dist",
+		"rootDir": "./",
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"types": ["node", "bun-types"]
+	},
+	"include": ["plugin/**/*.ts", "tool/**/*.ts", "agent/**/*.ts", "*.ts"],
+	"exclude": ["node_modules", "dist", "**/*.js", "**/*.test.ts"]
+}

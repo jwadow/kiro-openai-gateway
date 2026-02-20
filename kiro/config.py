@@ -24,10 +24,11 @@ Centralized storage for all settings, constants, and mappings.
 Loads environment variables and provides typed access to them.
 """
 
+import json
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -76,6 +77,50 @@ def _get_raw_env_value(var_name: str, env_file: str = ".env") -> Optional[str]:
     
     return None
 
+
+def _parse_bool_env(var_name: str, default: bool) -> bool:
+    """
+    Parse boolean environment variable with safe fallback.
+
+    Args:
+        var_name: Environment variable name
+        default: Default value when var is missing or invalid
+
+    Returns:
+        Parsed boolean value
+    """
+    raw_value = os.getenv(var_name)
+    if raw_value is None:
+        return default
+
+    normalized = raw_value.strip().lower()
+    if normalized in ("1", "true", "yes", "on"):
+        return True
+    if normalized in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+def _parse_int_env(var_name: str, default: int) -> int:
+    """
+    Parse integer environment variable with safe fallback.
+
+    Args:
+        var_name: Environment variable name
+        default: Default value when var is missing or invalid
+
+    Returns:
+        Parsed integer value
+    """
+    raw_value = os.getenv(var_name)
+    if raw_value is None:
+        return default
+
+    try:
+        return int(raw_value)
+    except ValueError:
+        return default
+
 # ==================================================================================================
 # Server Settings
 # ==================================================================================================
@@ -97,6 +142,119 @@ SERVER_PORT: int = int(os.getenv("SERVER_PORT", str(DEFAULT_SERVER_PORT)))
 
 # API key for proxy access (clients must pass it in Authorization header)
 PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", "my-super-secret-password-123")
+
+# Source of API key validation:
+# - env: legacy single shared key from PROXY_API_KEY
+# - mongodb: per-user key from MongoDB users collection
+_API_KEY_SOURCE_RAW = os.getenv("API_KEY_SOURCE", "env").strip().lower()
+API_KEY_SOURCE: str = _API_KEY_SOURCE_RAW if _API_KEY_SOURCE_RAW in ("env", "mongodb") else "env"
+
+# MongoDB settings for API key lookup and billing
+MONGODB_URI: str = os.getenv("MONGODB_URI", "")
+MONGODB_DB_NAME: str = os.getenv("MONGODB_DB_NAME", "fproxy")
+MONGODB_AUTH_KV_COLLECTION: str = os.getenv("MONGODB_AUTH_KV_COLLECTION", "auth_kv")
+MONGODB_USERS_COLLECTION: str = os.getenv("MONGODB_USERS_COLLECTION", "usersNew")
+MONGODB_CREDITS_COLLECTION: str = os.getenv("MONGODB_CREDITS_COLLECTION", "creditsNew")
+MONGODB_USER_API_KEY_FIELD: str = os.getenv("MONGODB_USER_API_KEY_FIELD", "apiKey")
+MONGODB_USER_ID_FIELD: str = os.getenv("MONGODB_USER_ID_FIELD", "_id")
+MONGODB_USER_ACTIVE_FIELD: str = os.getenv("MONGODB_USER_ACTIVE_FIELD", "isActive")
+MONGODB_CREDITS_USER_ID_FIELD: str = os.getenv("MONGODB_CREDITS_USER_ID_FIELD", "userId")
+MONGODB_CREDITS_BALANCE_FIELD: str = os.getenv("MONGODB_CREDITS_BALANCE_FIELD", "credits")
+
+# Billing settings
+BILLING_ENABLED: bool = _parse_bool_env("BILLING_ENABLED", False)
+BILLING_ENFORCE_SUFFICIENT_CREDITS: bool = _parse_bool_env("BILLING_ENFORCE_SUFFICIENT_CREDITS", True)
+BILLING_DECIMAL_PLACES: int = _parse_int_env("BILLING_DECIMAL_PLACES", 6)
+BILLING_MODEL_PRICES_JSON: str = os.getenv("BILLING_MODEL_PRICES_JSON", "[]")
+BILLING_UNKNOWN_MODEL_POLICY: str = os.getenv("BILLING_UNKNOWN_MODEL_POLICY", "default").strip().lower()
+if BILLING_UNKNOWN_MODEL_POLICY not in ("reject", "free", "default"):
+    BILLING_UNKNOWN_MODEL_POLICY = "default"
+
+
+def _parse_float_env(var_name: str, default: float) -> float:
+    """
+    Parse float environment variable with safe fallback.
+
+    Args:
+        var_name: Environment variable name
+        default: Default value when var is missing or invalid
+
+    Returns:
+        Parsed float value
+    """
+    raw_value = os.getenv(var_name)
+    if raw_value is None:
+        return default
+
+    try:
+        return float(raw_value)
+    except ValueError:
+        return default
+
+
+BILLING_DEFAULT_INPUT_PRICE_PER_MTOK: float = _parse_float_env("BILLING_DEFAULT_INPUT_PRICE_PER_MTOK", 3.0)
+BILLING_DEFAULT_OUTPUT_PRICE_PER_MTOK: float = _parse_float_env("BILLING_DEFAULT_OUTPUT_PRICE_PER_MTOK", 14.0)
+BILLING_DEFAULT_CACHE_WRITE_PRICE_PER_MTOK: float = _parse_float_env("BILLING_DEFAULT_CACHE_WRITE_PRICE_PER_MTOK", 3.75)
+BILLING_DEFAULT_CACHE_HIT_PRICE_PER_MTOK: float = _parse_float_env("BILLING_DEFAULT_CACHE_HIT_PRICE_PER_MTOK", 0.3)
+BILLING_DEFAULT_MULTIPLIER: float = _parse_float_env("BILLING_DEFAULT_MULTIPLIER", 1.1)
+
+
+def get_billing_model_prices() -> List[Dict[str, object]]:
+    """
+    Parse billing model pricing JSON from environment.
+
+    Returns:
+        List of model pricing dictionaries. Returns empty list on invalid JSON.
+    """
+    try:
+        parsed = json.loads(BILLING_MODEL_PRICES_JSON)
+    except json.JSONDecodeError:
+        return []
+
+    if isinstance(parsed, list):
+        return [item for item in parsed if isinstance(item, dict)]
+    return []
+
+
+# ==================================================================================================
+# Model Restriction Settings
+# ==================================================================================================
+
+# Optional strict model allowlist.
+# When enabled, requests for models outside this allowlist are rejected with HTTP 400,
+# and /v1/models only returns allowed models.
+MODEL_ALLOWLIST_ENABLED: bool = _parse_bool_env("MODEL_ALLOWLIST_ENABLED", False)
+
+# Accepted model IDs from clients (raw IDs allowed in addition to normalized forms).
+# Typical values for this deployment:
+# - claude-sonnet-4.5 / claude-sonnet-4-5-20250929
+# - claude-haiku-4.5 / claude-haiku-4-5-20251001
+MODEL_ALLOWED_IDS_JSON: str = os.getenv(
+    "MODEL_ALLOWED_IDS_JSON",
+    '["claude-sonnet-4.5","claude-haiku-4.5","claude-sonnet-4-5-20250929","claude-haiku-4-5-20251001"]',
+)
+
+
+def get_model_allowed_ids() -> Set[str]:
+    """
+    Parse allowed model IDs from environment.
+
+    Returns:
+        Lowercased set of allowed model IDs. Returns empty set on invalid config.
+    """
+    try:
+        parsed = json.loads(MODEL_ALLOWED_IDS_JSON)
+    except json.JSONDecodeError:
+        return set()
+
+    if not isinstance(parsed, list):
+        return set()
+
+    result: Set[str] = set()
+    for item in parsed:
+        if isinstance(item, str) and item.strip():
+            result.add(item.strip().lower())
+    return result
 
 # ==================================================================================================
 # VPN/Proxy Settings for Kiro API Access
@@ -145,6 +303,21 @@ KIRO_CREDS_FILE: str = str(Path(_raw_creds_file)) if _raw_creds_file else ""
 # or ~/.local/share/amazon-q/data.sqlite3 (amazon-q-developer-cli)
 _raw_cli_db_file = _get_raw_env_value("KIRO_CLI_DB_FILE") or os.getenv("KIRO_CLI_DB_FILE", "")
 KIRO_CLI_DB_FILE: str = str(Path(_raw_cli_db_file)) if _raw_cli_db_file else ""
+
+# Source for Kiro upstream auth credentials:
+# - auto: preserve existing priority (sqlite -> file -> env)
+# - sqlite: force KIRO_CLI_DB_FILE
+# - file: force KIRO_CREDS_FILE
+# - env: force REFRESH_TOKEN/PROFILE_ARN
+# - mongodb: load from MongoDB auth_kv collection
+_KIRO_AUTH_SOURCE_RAW = os.getenv("KIRO_AUTH_SOURCE", "auto").strip().lower()
+KIRO_AUTH_SOURCE: str = _KIRO_AUTH_SOURCE_RAW if _KIRO_AUTH_SOURCE_RAW in (
+    "auto",
+    "sqlite",
+    "file",
+    "env",
+    "mongodb",
+) else "auto"
 
 # ==================================================================================================
 # Kiro API URL Templates
@@ -468,4 +641,3 @@ def get_kiro_api_host(region: str) -> str:
 def get_kiro_q_host(region: str) -> str:
     """Return Q API host for the specified region."""
     return KIRO_Q_HOST_TEMPLATE.format(region=region)
-

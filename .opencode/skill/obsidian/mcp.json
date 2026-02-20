@@ -1,0 +1,22 @@
+{
+	"obsidian": {
+		"command": "npx",
+		"args": ["-y", "@mauricio.wolff/mcp-obsidian", "{env:OBSIDIAN_VAULT_PATH}"],
+		"env": {
+			"OBSIDIAN_VAULT_PATH": "{env:OBSIDIAN_VAULT_PATH}"
+		},
+		"includeTools": [
+			"read_note",
+			"read_multiple_notes",
+			"get_frontmatter",
+			"get_notes_info",
+			"list_directory",
+			"write_note",
+			"update_frontmatter",
+			"delete_note",
+			"move_note",
+			"search_notes",
+			"manage_tags"
+		]
+	}
+}

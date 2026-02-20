@@ -1,0 +1,16 @@
+{
+  "playwright": {
+    "command": "npx",
+    "args": ["@playwright/mcp@latest"],
+    "includeTools": [
+      "browser_navigate",
+      "browser_snapshot",
+      "browser_take_screenshot",
+      "browser_click",
+      "browser_type",
+      "browser_fill",
+      "browser_wait_for",
+      "browser_resize"
+    ]
+  }
+}

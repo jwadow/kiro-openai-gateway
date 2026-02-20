@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from loguru import logger
+from kiro.config import MODEL_ALLOWLIST_ENABLED, get_model_allowed_ids
 
 if TYPE_CHECKING:
     from kiro.cache import ModelInfoCache
@@ -188,6 +189,20 @@ def get_model_id_for_kiro(model_name: str, hidden_models: Dict[str, str]) -> str
         'CLAUDE_3_7_SONNET_20250219_V1_0'
     """
     normalized = normalize_model_name(model_name)
+
+    if MODEL_ALLOWLIST_ENABLED:
+        allowed_ids = get_model_allowed_ids()
+        requested_candidates = {
+            model_name.lower() if model_name else "",
+            normalized.lower() if normalized else "",
+        }
+        if not requested_candidates.intersection(allowed_ids):
+            allowed_list = sorted(allowed_ids)
+            raise ValueError(
+                "Model is not allowed. Supported models: "
+                + ", ".join(allowed_list)
+            )
+
     return hidden_models.get(normalized, normalized)
 
 
@@ -363,7 +378,17 @@ class ModelResolver:
         
         # Add alias keys (these are the names users will see and use)
         models.update(self.aliases.keys())
-        
+
+        # Optional strict filtering by explicit allowlist
+        if MODEL_ALLOWLIST_ENABLED:
+            allowed_ids = get_model_allowed_ids()
+            filtered_models = set()
+            for model in models:
+                normalized = normalize_model_name(model)
+                if model.lower() in allowed_ids or normalized.lower() in allowed_ids:
+                    filtered_models.add(normalized)
+            models = filtered_models
+
         return sorted(models)
     
     def get_models_by_family(self, family: str) -> List[str]:

@@ -1,0 +1,9 @@
+{
+	"stitch": {
+		"serverUrl": "https://stitch.googleapis.com/mcp",
+		"headers": {
+			"Authorization": "Bearer ${STITCH_ACCESS_TOKEN}",
+			"X-Goog-User-Project": "${GOOGLE_CLOUD_PROJECT}"
+		}
+	}
+}

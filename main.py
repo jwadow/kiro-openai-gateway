@@ -61,6 +61,10 @@ from kiro.config import (
     REGION,
     KIRO_CREDS_FILE,
     KIRO_CLI_DB_FILE,
+    KIRO_AUTH_SOURCE,
+    MONGODB_URI,
+    MONGODB_DB_NAME,
+    MONGODB_AUTH_KV_COLLECTION,
     PROXY_API_KEY,
     LOG_LEVEL,
     SERVER_HOST,
@@ -220,6 +224,7 @@ def validate_configuration() -> None:
     has_refresh_token = bool(REFRESH_TOKEN)
     has_creds_file = bool(KIRO_CREDS_FILE)
     has_cli_db = bool(KIRO_CLI_DB_FILE)
+    has_mongodb_auth = bool(MONGODB_URI and MONGODB_DB_NAME)
     
     # Check if creds file actually exists
     if KIRO_CREDS_FILE:
@@ -235,8 +240,19 @@ def validate_configuration() -> None:
             has_cli_db = False
             logger.warning(f"KIRO_CLI_DB_FILE not found: {KIRO_CLI_DB_FILE}")
     
+    required_sources = {
+        "sqlite": has_cli_db,
+        "file": has_creds_file,
+        "env": has_refresh_token,
+        "mongodb": has_mongodb_auth,
+    }
+    if KIRO_AUTH_SOURCE == "auto":
+        has_selected_credentials = has_refresh_token or has_creds_file or has_cli_db
+    else:
+        has_selected_credentials = required_sources.get(KIRO_AUTH_SOURCE, False)
+
     # If no credentials found, show helpful error
-    if not has_refresh_token and not has_creds_file and not has_cli_db:
+    if not has_selected_credentials:
         if not env_file.exists():
             # No .env file and no environment variables
             errors.append(
@@ -252,6 +268,7 @@ def validate_configuration() -> None:
                 "      - Option 1: KIRO_CREDS_FILE to your Kiro credentials JSON file\n"
                 "      - Option 2: REFRESH_TOKEN from Kiro IDE traffic\n"
                 "      - Option 3: KIRO_CLI_DB_FILE to kiro-cli SQLite database\n"
+                "      - Option 4: KIRO_AUTH_SOURCE=mongodb with MONGODB_URI/MONGODB_DB_NAME\n"
                 "\n"
                 "Or use environment variables (for Docker):\n"
                 "   docker run -e PROXY_API_KEY=\"...\" -e REFRESH_TOKEN=\"...\" ...\n"
@@ -276,6 +293,11 @@ def validate_configuration() -> None:
                 "\n"
                 "   Option 3: kiro-cli SQLite database (AWS SSO)\n"
                 "      KIRO_CLI_DB_FILE=\"~/.local/share/kiro-cli/data.sqlite3\"\n"
+                "\n"
+                "   Option 4: MongoDB auth_kv\n"
+                "      KIRO_AUTH_SOURCE=\"mongodb\"\n"
+                "      MONGODB_URI=\"mongodb+srv://...\"\n"
+                "      MONGODB_DB_NAME=\"fproxy\"\n"
                 "\n"
                 "   See README.md for how to obtain credentials."
             )
@@ -343,6 +365,10 @@ async def lifespan(app: FastAPI):
         region=REGION,
         creds_file=KIRO_CREDS_FILE if KIRO_CREDS_FILE else None,
         sqlite_db=KIRO_CLI_DB_FILE if KIRO_CLI_DB_FILE else None,
+        auth_source=KIRO_AUTH_SOURCE,
+        mongodb_uri=MONGODB_URI if MONGODB_URI else None,
+        mongodb_db_name=MONGODB_DB_NAME,
+        mongodb_collection=MONGODB_AUTH_KV_COLLECTION,
     )
     
     # Create model cache

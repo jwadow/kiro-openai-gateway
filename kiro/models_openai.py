@@ -207,11 +207,13 @@ class ChatCompletionUsage(BaseModel):
         completion_tokens: Number of tokens in response
         total_tokens: Total number of tokens
         credits_used: Credits used (Kiro-specific)
+        kiro_credits_used: Raw Kiro metering credits before local billing override
     """
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
     credits_used: Optional[float] = None
+    kiro_credits_used: Optional[float] = None
 
 
 class ChatCompletionResponse(BaseModel):

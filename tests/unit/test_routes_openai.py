@@ -21,6 +21,7 @@ import json
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+import kiro.routes_openai as routes_openai
 from kiro.routes_openai import verify_api_key, router
 from kiro.config import PROXY_API_KEY, APP_VERSION
 
@@ -140,6 +141,40 @@ class TestVerifyApiKey:
             await verify_api_key(lowercase)
         
         print(f"Checking: HTTPException with status 401...")
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_mongodb_mode_accepts_known_active_api_key(self, monkeypatch):
+        """
+        What it does: Verifies MongoDB auth mode accepts active user API key.
+        Purpose: Ensure per-user API key auth works when API_KEY_SOURCE=mongodb.
+        """
+        print("Setup: Enabling MongoDB auth mode with known user...")
+        monkeypatch.setattr(routes_openai, "API_KEY_SOURCE", "mongodb")
+        monkeypatch.setattr(routes_openai, "find_active_user_by_api_key", lambda _: {"_id": "user-123"})
+        monkeypatch.setattr(routes_openai, "get_user_id_from_doc", lambda _: "user-123")
+
+        print("Action: Calling verify_api_key with Bearer API key...")
+        result = await verify_api_key("Bearer per_user_key_abc")
+
+        print(f"Comparing result: Expected True, Got {result}")
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_mongodb_mode_rejects_unknown_api_key(self, monkeypatch):
+        """
+        What it does: Verifies MongoDB auth mode rejects unknown API key.
+        Purpose: Ensure unauthorized keys are blocked in MongoDB mode.
+        """
+        print("Setup: Enabling MongoDB auth mode with unknown key...")
+        monkeypatch.setattr(routes_openai, "API_KEY_SOURCE", "mongodb")
+        monkeypatch.setattr(routes_openai, "find_active_user_by_api_key", lambda _: None)
+
+        print("Action: Calling verify_api_key with unknown key...")
+        with pytest.raises(HTTPException) as exc_info:
+            await verify_api_key("Bearer unknown_key")
+
+        print("Checking: HTTPException with status 401...")
         assert exc_info.value.status_code == 401
 
 

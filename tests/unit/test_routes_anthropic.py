@@ -18,6 +18,7 @@ import json
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+import kiro.routes_anthropic as routes_anthropic
 from kiro.routes_anthropic import verify_anthropic_api_key, router
 from kiro.config import PROXY_API_KEY
 
@@ -152,6 +153,39 @@ class TestVerifyAnthropicApiKey:
         assert "type" in detail
         assert "error" in detail
         assert detail["error"]["type"] == "authentication_error"
+
+    @pytest.mark.asyncio
+    async def test_mongodb_mode_accepts_x_api_key(self, monkeypatch):
+        """
+        What it does: Verifies MongoDB mode accepts x-api-key when user exists.
+        Purpose: Ensure Anthropic native header works in MongoDB auth mode.
+        """
+        print("Setup: MongoDB auth mode with active user...")
+        monkeypatch.setattr(routes_anthropic, "API_KEY_SOURCE", "mongodb")
+        monkeypatch.setattr(routes_anthropic, "find_active_user_by_api_key", lambda _: {"_id": "u-1"})
+        monkeypatch.setattr(routes_anthropic, "get_user_id_from_doc", lambda _: "u-1")
+
+        print("Action: Calling verifier with x-api-key...")
+        result = await verify_anthropic_api_key(x_api_key="user_key", authorization=None)
+
+        print(f"Comparing result: Expected True, Got {result}")
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_mongodb_mode_rejects_missing_headers(self, monkeypatch):
+        """
+        What it does: Verifies MongoDB mode rejects missing auth headers.
+        Purpose: Ensure auth is mandatory in MongoDB mode.
+        """
+        print("Setup: MongoDB auth mode with missing headers...")
+        monkeypatch.setattr(routes_anthropic, "API_KEY_SOURCE", "mongodb")
+
+        print("Action: Calling verifier without headers...")
+        with pytest.raises(HTTPException) as exc_info:
+            await verify_anthropic_api_key(x_api_key=None, authorization=None)
+
+        print("Checking: HTTPException with status 401...")
+        assert exc_info.value.status_code == 401
 
 
 # =============================================================================
@@ -1095,6 +1129,15 @@ class TestTruncationRecoveryMessageModification:
     Verifies that tool_result blocks are modified when truncation info exists in cache.
     Part of Truncation Recovery System (Issue #56).
     """
+
+    @pytest.fixture(autouse=True)
+    def ensure_truncation_recovery_enabled(self, monkeypatch):
+        """
+        Ensure truncation recovery remains enabled regardless of prior test side effects.
+        """
+        import kiro.config as config
+        monkeypatch.setattr(config, "TRUNCATION_RECOVERY", True)
+
     
     @staticmethod
     def _get_block_value(block, key, default=""):
